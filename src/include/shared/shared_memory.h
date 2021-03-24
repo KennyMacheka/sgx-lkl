@@ -5,6 +5,7 @@
 
 #include <shared/vio_event_channel.h>
 
+// Is this where the buffer stuff I was reading comes into play when the hypervisor consumes data from the guest and vice versa
 typedef struct sgxlkl_shared_memory
 {
     /* Shared memory for virtio implementation */

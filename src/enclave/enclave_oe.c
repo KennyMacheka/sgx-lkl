@@ -306,6 +306,7 @@ static void _read_eeid_config()
     sgxlkl_enclave_state.config = cfg;
 }
 
+// For my understanding: copies host shared memory contents into the enclave configuration
 static void _copy_shared_memory(const sgxlkl_shared_memory_t* host)
 {
     const sgxlkl_enclave_config_t* cfg = sgxlkl_enclave_state.config;
