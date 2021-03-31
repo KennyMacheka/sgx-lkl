@@ -211,6 +211,9 @@ static void virtio_notify_host_device(struct virtio_dev* dev, uint32_t qidx)
  */
 static int virtio_write(void* data, int offset, void* res, int size)
 {
+    /**MODIFY here:
+     * use struct virtq_packed_desc
+     */
     struct virtio_dev* dev = (struct virtio_dev*)data;
     struct virtq* q = &dev->queue[dev->queue_sel];
     uint32_t val;

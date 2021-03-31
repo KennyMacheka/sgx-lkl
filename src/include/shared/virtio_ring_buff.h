@@ -58,4 +58,57 @@ struct virtq
     uint16_t last_used_idx_signaled;
 };
 
+/**
+ Packed ring potential impelementation:
+
+ struct virtq_packed_desc
+ {
+
+    __le64 addr;
+    __le32 len;
+    __le16 id;
+    __le16 flags;
+ };
+
+ struct virtq_packed_desc_event
+ {
+
+    __le16 off_wrap;
+
+    __le16 flags;
+ };
+
+
+struct vring_desc_extra_packed
+{
+	dma_addr_t addr;
+    u32 len;
+    u16 flags;
+};
+
+
+struct virtq
+ {
+    union
+    {
+        struct {
+            struct virtq vring;
+
+        }split;
+
+        struct
+
+        {
+            struct virtq_packed_desc *desc;
+            struct virtq_packed_desc_event *driver;
+            struct virtq_packed_desc_event *device;
+
+            struct virtq_desc_extra_packed *desc_extra;
+
+        }packed;
+    }
+
+ }
+
+ */
 #endif
