@@ -28,6 +28,9 @@ static inline struct virtq_desc* vring_desc_at_avail_idx(
     struct virtq* q,
     uint16_t idx)
 {
+    /**Modify HERE. This will probably change to how it's
+     * meant to work for packed ring
+     */
     uint16_t desc_idx = q->avail->ring[idx & (q->num - 1)];
     return &q->desc[desc_idx & (q->num - 1)];
 }
@@ -42,6 +45,7 @@ static void add_dev_buf_from_vring_desc(
     struct virtio_req* req,
     struct virtq_desc* vring_desc)
 {
+    /**MODIFY HERE: change to virtq_packed_desc */
     struct iovec* buf = &req->buf[req->buf_count++];
 
     buf->iov_base = (void*)(uintptr_t)(vring_desc->addr);
@@ -61,6 +65,10 @@ static struct virtq_desc* get_next_desc(
     struct virtq_desc* desc,
     uint16_t* idx)
 {
+    /**MODIFY HERE:
+     * will need to change to struct virtq_packed_desc,
+     * and change fundamentally how this works
+     */
     uint16_t desc_idx;
 
     if (q->max_merge_len)
@@ -233,6 +241,10 @@ void virtio_req_complete(struct virtio_req* req, uint32_t len)
 static int virtio_process_one(struct virtio_dev* dev, int qidx)
 {
     struct virtq* q = &dev->queue[qidx];
+
+    /**MODIFY HERE:
+     *  q->packed->desc ?
+     */
     uint16_t idx = q->last_avail_idx;
 
     struct _virtio_req _req = {
@@ -243,6 +255,9 @@ static int virtio_process_one(struct virtio_dev* dev, int qidx)
 
     struct virtio_req* req = &_req.req;
     memset(req, 0, sizeof(struct virtio_req));
+    /**MODIFY HERE:
+     * struct virtq_packed_desc desc
+     */
     struct virtq_desc* desc = vring_desc_at_avail_idx(q, idx);
     do
     {
