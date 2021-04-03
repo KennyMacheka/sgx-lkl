@@ -10,6 +10,10 @@
 #include <enclave/sgxlkl_t.h>
 #include <enclave/enclave_util.h>
 #include <shared/virtio_ring_buff.h>
+/**Shadow implementation
+ #include <shared/enclave_state.h>
+ To use sgxlkl_enclave_state
+ */
 #include <stdatomic.h>
 #include "enclave/vio_enclave_event_channel.h"
 #include <linux/virtio_blk.h>
@@ -25,6 +29,25 @@
 
 #undef BIT
 #define BIT(x) (1ULL << x)
+
+/**
+ * Shadow virtio_dev structure
+ * Inside this file, we need a mapping from virtio_dev to a shadow virtio_dev
+ * So whenever one of the functions here is called, we get the shadow virtio_dev
+ * when necessary
+ * Couple questions:
+ * Where do we set up this map? (possible in enclave_oe.c copy_shared_memory?)
+ *  Can use sgxlkl_enclave_state from enclave_state.h
+ *  There'll be a map mapping the address of a virtio_dev to its shadow copu
+ *
+ * When do we setup up the map:
+ *  Inside enclave_oe.c
+ * Possible have the shadow dev structures as extra members in  sgxlkl_enclave_state_t (in enclave_state.h)
+ *
+ *
+ * For each function in this file where we use virtio dev, use  sgxlkl_enclave_state_t to get
+ * the shadow dev, then decide which one to use
+ */
 
 /* Used for notifying LKL for the list of virtio devices at bootup.
  * Currently block, network and console devices are passed */

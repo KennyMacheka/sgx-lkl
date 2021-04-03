@@ -53,6 +53,18 @@ typedef struct sgxlkl_enclave_state
 
     /* This flag is used by the tracing macros */
     bool verbose;
+
+    /**
+     * Shadow implementation:
+     *    Have a map of address to these pointers
+     *    Where address is the address of the real virtio_dev
+     *    Decide how to implement later
+     *    void* shadow_virtio_net_dev_mem;
+     *    void* shadow_virtio_console_mem;
+
+     *    void* shadow_virtio_blk_dev_mem;
+     *    char** virtio shadow_blk_dev_names;
+    */
 } sgxlkl_enclave_state_t;
 
 extern sgxlkl_enclave_state_t sgxlkl_enclave_state;

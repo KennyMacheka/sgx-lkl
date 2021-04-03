@@ -306,6 +306,14 @@ static void _read_eeid_config()
     sgxlkl_enclave_state.config = cfg;
 }
 
+/**Shadow implementation
+ * copy_block_device(normal_dev, shadow_dev, normal_blk_dev_names, shadow_blk_dev_names)
+ * copu_network_device(normal_dev, shadow_dev)
+ * copu_console_device(normal_dev, shadow_dev)
+ * Might only need two functions if network and console use virtio_dev
+ * Setup a map at the same time within these functions, using the address of a virtio_dev as the key
+ */
+
 // For my understanding: copies host shared memory contents into the enclave configuration
 static void _copy_shared_memory(const sgxlkl_shared_memory_t* host)
 {
@@ -316,9 +324,15 @@ static void _copy_shared_memory(const sgxlkl_shared_memory_t* host)
     sgxlkl_shared_memory_t* enc = &sgxlkl_enclave_state.shared_memory;
     memset(enc, 0, sizeof(sgxlkl_shared_memory_t));
 
+    /**Shadow implementation
+     * Setup shadow virtio network device
+    */
     if (cfg->io.network)
         enc->virtio_net_dev_mem = host->virtio_net_dev_mem;
 
+    /**Shadow implementation
+     * Setup shadow virtio console device
+    */
     if (cfg->io.console)
         enc->virtio_console_mem = host->virtio_console_mem;
 
@@ -346,6 +360,9 @@ static void _copy_shared_memory(const sgxlkl_shared_memory_t* host)
             "Could not allocate memory for virtio block devices\n");
         for (size_t i = 0; i < enc->num_virtio_blk_dev; i++)
         {
+            /**Shadow implementation
+             * Setup shadow virtio block device
+             */
             enc->virtio_blk_dev_mem[i] = host->virtio_blk_dev_mem[i];
             const char* name = host->virtio_blk_dev_names[i];
             size_t name_len = oe_strlen(name) + 1;
