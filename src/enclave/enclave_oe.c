@@ -309,7 +309,7 @@ static void _read_eeid_config()
 /**Shadow implementation
  * copy_block_device(normal_dev, shadow_dev, normal_blk_dev_names, shadow_blk_dev_names)
  * copu_network_device(normal_dev, shadow_dev)
- * copu_console_device(normal_dev, shadow_dev)
+ * copy_console_device(normal_dev, shadow_dev)
  * Might only need two functions if network and console use virtio_dev
  * Setup a map at the same time within these functions, using the address of a virtio_dev as the key
  */

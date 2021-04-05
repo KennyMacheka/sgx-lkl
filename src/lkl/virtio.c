@@ -36,17 +36,23 @@
  * So whenever one of the functions here is called, we get the shadow virtio_dev
  * when necessary
  * Couple questions:
- * Where do we set up this map? (possible in enclave_oe.c copy_shared_memory?)
+ * Where do we set up this map? (possible in enclave_oe.c/copy_shared_memory?)
  *  Can use sgxlkl_enclave_state from enclave_state.h
- *  There'll be a map mapping the address of a virtio_dev to its shadow copu
+ *  There'll be a map mapping the address of a virtio_dev to its shadow copy
  *
  * When do we setup up the map:
  *  Inside enclave_oe.c
- * Possible have the shadow dev structures as extra members in  sgxlkl_enclave_state_t (in enclave_state.h)
+ * Have the shadow dev structures as extra members in  sgxlkl_enclave_state_t (in enclave_state.h)
  *
  *
  * For each function in this file where we use virtio dev, use  sgxlkl_enclave_state_t to get
  * the shadow dev, then decide which one to use
+ *
+ *
+ * Files to make changes to and use shadow dev (look at comments in each):
+ * virtio_blkdev.c
+ * virtio_netdev.c
+ * virtio_console.c
  */
 
 /* Used for notifying LKL for the list of virtio devices at bootup.

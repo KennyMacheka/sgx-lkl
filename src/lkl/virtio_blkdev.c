@@ -11,6 +11,9 @@
 /*
  * Function to trigger block dev irq to notify front end driver
  */
+/**Shadow Implementation
+ * Access shadow dev instead
+ */
 static void lkl_deliver_irq(uint8_t dev_id)
 {
     struct virtio_dev* dev =
@@ -23,6 +26,11 @@ static void lkl_deliver_irq(uint8_t dev_id)
 
 /*
  * Function to perform virtio device setup
+ */
+/**Shadow Implementation
+ *Need to use shadow dev for accessing config_len
+ *Do we pass in shadow dev or normal dev in lkl_virtio_dev_setup?
+ *  Answer: we pass in the shadow dev initially, virtio.c will get the original
  */
 int lkl_add_disks(
     const sgxlkl_enclave_root_config_t* root,

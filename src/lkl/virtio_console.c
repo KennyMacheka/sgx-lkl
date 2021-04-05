@@ -12,6 +12,9 @@
 /*
  * Function to generate an interrupt for LKL kernel to reap the virtQ data
  */
+/**Shadow Implementation
+ * Access shadow dev instead
+ */
 static void lkl_deliver_irq(uint64_t dev_id)
 {
     struct virtio_dev* dev =
@@ -24,6 +27,11 @@ static void lkl_deliver_irq(uint64_t dev_id)
 
 /*
  * Function to add a new net device to LKL
+ */
+/**Shadow Implementation
+ *Need to use shadow dev for accessing config_len
+ *Do we pass in shadow dev or normal dev in lkl_virtio_dev_setup?
+ *  Answer: we pass in the shadow dev initially, virtio.c will get the original
  */
 int lkl_virtio_console_add(struct virtio_dev* console)
 {
