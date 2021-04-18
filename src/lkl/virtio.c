@@ -15,7 +15,12 @@
 #include <linux/virtio_blk.h>
 #include <linux/virtio_mmio.h>
 
+
 #include "openenclave/corelibc/oestring.h"
+
+#ifdef DEBUG
+#include <openenclave/internal/print.h>
+#endif
 
 // from inttypes.h
 #define PRIxPTR "lx"
@@ -183,7 +188,8 @@ static inline void set_ptr_low(_Atomic(uint64_t) * ptr, uint32_t val)
     } while (!atomic_compare_exchange_weak(ptr, &expected, desired));
 }
 
-static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
+static inline void
+set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 {
     uint64_t expected = *ptr;
     uint64_t desired;
@@ -257,6 +263,9 @@ static int virtio_write(void* data, int offset, void* res, int size)
             dev->queue[dev->queue_sel].ready = val;
             break;
         case VIRTIO_MMIO_QUEUE_NOTIFY:
+#ifdef DEBUG
+            oe_host_fprintf(0, "Notifying host device.\n");
+#endif
             virtio_notify_host_device(dev, val);
             break;
         case VIRTIO_MMIO_INTERRUPT_ACK:
