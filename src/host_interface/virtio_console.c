@@ -231,6 +231,8 @@ int virtio_console_init(sgxlkl_host_state_t* host_state, host_dev_config_t* cfg)
 
     size_t host_console_size = next_pow2(sizeof(struct virtio_console_dev));
     size_t console_vq_size;
+    //Oblivious
+    size_t console_desc_size = QUEUE_DEPTH * next_pow2(sizeof(struct virtq_packed_desc));
 
     if (!packed_ring)
         console_vq_size = NUM_QUEUES * sizeof(struct virtq);
@@ -299,6 +301,19 @@ int virtio_console_init(sgxlkl_host_state_t* host_state, host_dev_config_t* cfg)
             dev->packed.queue[i].num_max = QUEUE_DEPTH;
             dev->packed.queue[i].device_wrap_counter = 1;
             dev->packed.queue[i].driver_wrap_counter = 1;
+            dev->packed.queue[i].desc = mmap(
+                0,
+                console_desc_size,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_ANONYMOUS,
+                -1,
+                0);
+            if (!dev->packed.queue[i].desc)
+            {
+                sgxlkl_host_fail("Host console device virtio queue desc mem alloc failed\n");
+                return -1;
+            }
+            memset(dev->packed.queue[i].desc, 0, console_desc_size);
         }
     }
 

@@ -48,6 +48,12 @@ bool packed_ring = false;
 #include <openenclave/internal/print.h>
 #endif
 
+/**
+ * Obliviousness test:
+ *  Redirect VIRTIO_MMIO queue operations onto shadow structure (guest-bridge)
+ *  Allocate queue in host side and fill it in as necessary
+ *
+ */
 
 /* Used for notifying LKL for the list of virtio devices at bootup.
  * Currently block, network and console devices are passed */
@@ -66,6 +72,7 @@ typedef void (*lkl_virtio_dev_deliver_irq)(uint64_t dev_id);
 static lkl_virtio_dev_deliver_irq virtio_deliver_irq[DEVICE_COUNT];
 
 static struct virtio_dev* dev_hosts[DEVICE_COUNT];
+static struct virtio_dev* shadow_devs[DEVICE_COUNT];  //Rename to devs, change other to dev_names?
 
 /*
  * Used for switching between the host and shadow dev structure based
@@ -134,7 +141,9 @@ static int virtio_read(void* data, int offset, void* res, int size)
     struct virtio_dev_handle* dev_handle = (struct virtio_dev_handle*)data;
     struct virtio_dev* dev = dev_handle->dev;
     struct virtio_dev* dev_host = dev_handle->dev_host;
-
+#ifdef DEBUG
+    oe_host_printf("Virtio read %x\n", offset);
+#endif
     if (offset >= VIRTIO_MMIO_CONFIG)
     {
         offset -= VIRTIO_MMIO_CONFIG;
@@ -186,9 +195,15 @@ static int virtio_read(void* data, int offset, void* res, int size)
             break;
         /* Security Review: dev->status is host-read-write */
         case VIRTIO_MMIO_STATUS:
+#ifdef DEBUG
+            oe_host_printf("Reading status");
+#endif
             val = dev_host->status;
             if (dev->status != val)
                 dev->status = val;
+#ifdef DEBUG
+            oe_host_printf("Read status");
+#endif
             break;
         /* Security Review: dev->config_gen should be host-write-once */
         case VIRTIO_MMIO_CONFIG_GENERATION:
@@ -277,10 +292,30 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
     } while (!atomic_compare_exchange_weak(ptr, &expected, desired));
 }
 
-static void virtio_notify_host_device(struct virtio_dev* dev, uint32_t qidx)
+static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
     uint8_t dev_id = (uint8_t)dev->vendor_id;
+    struct virtq_packed_desc* dev_desc = dev->packed.queue[qidx].desc;
+    struct virtq_packed_desc* dev_host_desc = dev_host->packed.queue[qidx].desc;
+#ifdef DEBUG
+    oe_host_printf("Notifying device\n");
+#endif
+    // Oblivious
+    if (packed_ring)
+    {
+         for (int i = 0; i < dev->packed.queue[qidx].num; i++)
+         {
+             dev_host_desc[i].addr = dev_desc[i].addr;
+             dev_host_desc[i].len = dev_desc[i].len;
+             dev_host_desc[i].id = dev_desc[i].id;
+             dev_host_desc[i].flags = dev_desc[i].flags;
+         }
+    }
+
     vio_enclave_notify_enclave_event (dev_id, qidx);
+#ifdef DEBUG
+    oe_host_printf("Notified device\n");
+#endif
 }
 
 /*
@@ -316,10 +351,13 @@ static int virtio_write(void* data, int offset, void* res, int size)
     struct virtio_dev* dev_host = dev_handle->dev_host;
 
     struct virtq* split_q = packed_ring ? NULL : &dev_host->split.queue[dev->queue_sel];
-    struct virtq_packed* packed_q = packed_ring ? &dev_host->packed.queue[dev->queue_sel] : NULL;
+    struct virtq_packed* packed_q = packed_ring ? &dev->packed.queue[dev->queue_sel] : NULL;
     uint32_t val;
     int ret = 0;
 
+#ifdef DEBUG
+    oe_host_printf("Virtio write %x\n", offset);
+#endif
     if (offset >= VIRTIO_MMIO_CONFIG)
     {
         offset -= VIRTIO_MMIO_CONFIG;
@@ -398,7 +436,7 @@ static int virtio_write(void* data, int offset, void* res, int size)
          * update to desc ring and avail ring in host memory.
          */
         case VIRTIO_MMIO_QUEUE_NOTIFY:
-            virtio_notify_host_device(dev, val);
+            virtio_notify_host_device(dev, dev_host, val);
             break;
         /* Security Review: dev->int_status is host-read-write */
         case VIRTIO_MMIO_INTERRUPT_ACK:
@@ -452,13 +490,13 @@ static int virtio_write(void* data, int offset, void* res, int size)
          */
         case VIRTIO_MMIO_QUEUE_AVAIL_LOW:
             if (packed_ring)
-                set_ptr_low((_Atomic(uint64_t)*)&packed_q->driver, val);
+                set_ptr_low((_Atomic(uint64_t)*)&dev_host->packed.queue[dev->queue_sel].driver, val);
             else
                 set_ptr_low((_Atomic(uint64_t)*)&split_q->avail, val);
             break;
         case VIRTIO_MMIO_QUEUE_AVAIL_HIGH:
             if (packed_ring)
-               set_ptr_high((_Atomic(uint64_t)*)&packed_q->driver, val);
+               set_ptr_high((_Atomic(uint64_t)*)&dev_host->packed.queue[dev->queue_sel].driver, val);
             else
                 set_ptr_high((_Atomic(uint64_t)*)&split_q->avail, val);
             break;
@@ -476,13 +514,13 @@ static int virtio_write(void* data, int offset, void* res, int size)
          */
         case VIRTIO_MMIO_QUEUE_USED_LOW:
             if (packed_ring)
-               set_ptr_low((_Atomic(uint64_t)*)&packed_q->device, val);
+               set_ptr_low((_Atomic(uint64_t)*)&dev_host->packed.queue[dev->queue_sel].device, val);
             else
                 set_ptr_low((_Atomic(uint64_t)*)&split_q->used, val);
             break;
         case VIRTIO_MMIO_QUEUE_USED_HIGH:
              if (packed_ring)
-               set_ptr_high((_Atomic(uint64_t)*)&packed_q->device, val);
+               set_ptr_high((_Atomic(uint64_t)*)&dev_host->packed.queue[dev->queue_sel].device, val);
             else
                 set_ptr_high((_Atomic(uint64_t)*)&split_q->used, val);
             break;
@@ -520,6 +558,7 @@ static int device_num_queues(int device_id)
 void lkl_virtio_deliver_irq(uint8_t dev_id)
 {
     struct virtio_dev *dev_host = dev_hosts[dev_id];
+    struct virtio_dev *dev = shadow_devs[dev_id];
     int num_queues = device_num_queues(dev_host->device_id);
 
     //Verify descriptor len doesn't exceed bounds
@@ -536,6 +575,11 @@ void lkl_virtio_deliver_irq(uint8_t dev_id)
                     sgxlkl_error("Virtio desc memory size larger than allocated bounce buffer\n");
                     return;
                 }
+
+                dev->packed.queue[i].desc[j].addr = packed_q->desc[j].addr;
+                dev->packed.queue[i].desc[j].len = packed_q->desc[j].len;
+                dev->packed.queue[i].desc[j].id = packed_q->desc[j].id;
+                dev->packed.queue[i].desc[j].flags = packed_q->desc[j].flags;
             }
         }
 
@@ -727,6 +771,7 @@ int lkl_virtio_dev_setup(
 
     virtio_deliver_irq[dev->vendor_id] = deliver_irq_cb;
     dev_hosts[dev->vendor_id] = dev_host;
+    shadow_devs[dev->vendor_id] = dev;
     dev->base = register_iomem(dev_handle, mmio_size, &virtio_ops);
 
     if (!lkl_is_running())

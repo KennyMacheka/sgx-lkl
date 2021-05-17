@@ -116,6 +116,7 @@ int blk_device_init(
     struct virtio_blk_dev* host_blk_device = NULL;
     size_t bdev_size = sizeof(struct virtio_blk_dev);
     size_t vq_size;
+    size_t bdev_desc_size = HOST_BLK_DEV_QUEUE_DEPTH  * next_pow2(sizeof(struct virtq_packed_desc));
 
     if (!packed_ring)
         vq_size = HOST_BLK_DEV_NUM_QUEUES * sizeof(struct virtq);
@@ -166,9 +167,24 @@ int blk_device_init(
         }
         else
         {
-            host_blk_device->dev.packed.queue[i].num_max = HOST_BLK_DEV_QUEUE_DEPTH;
+            host_blk_device->dev.packed.queue[i].num_max =
+                HOST_BLK_DEV_QUEUE_DEPTH;
             host_blk_device->dev.packed.queue[i].device_wrap_counter = 1;
             host_blk_device->dev.packed.queue[i].driver_wrap_counter = 1;
+            host_blk_device->dev.packed.queue[i].desc = mmap(
+                0,
+                bdev_desc_size,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_ANONYMOUS,
+                -1,
+                0);
+            if (!host_blk_device->dev.packed.queue[i].desc)
+            {
+                sgxlkl_host_fail(
+                    "Host console device virtio queue desc mem alloc failed\n");
+                return -1;
+            }
+            memset(host_blk_device->dev.packed.queue[i].desc, 0, bdev_desc_size);
         }
     }
 

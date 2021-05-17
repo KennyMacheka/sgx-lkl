@@ -523,17 +523,26 @@ static void virtio_process_queue_split(struct virtio_dev* dev, uint32_t qidx)
  */
 static void virtio_process_queue_packed(struct virtio_dev* dev, uint32_t qidx)
 {
+#ifdef DEBUG
+    printf("Entering %d\n", qidx);
+#endif
     struct virtq_packed* q = &dev->packed.queue[qidx];
-
+#ifdef DEBUG
+    printf("Entered\n");
+#endif
     if (!q->ready)
         return;
-
+#ifdef DEBUG
+    printf("Ready\n");
+#endif
     if (dev->ops->acquire_queue)
         dev->ops->acquire_queue(dev, qidx);
 
     __sync_synchronize();
     q->device->flags = LKL_VRING_PACKED_EVENT_FLAG_DISABLE;
-
+#ifdef DEBUG
+    printf("Processing %d\n", q->num);
+#endif
     while (packed_desc_is_avail(q,&q->desc[q->avail_desc_idx & (q->num-1)]))
     {
         // Need to process desc here
