@@ -12,6 +12,7 @@
 #include <enclave/sgxlkl_t.h>
 #include <enclave/enclave_util.h>
 #include <enclave/enclave_mem.h>
+#include <enclave/lthread.h>
 #include <shared/virtio_ring_buff.h>
 #include <shared/env.h>
 #include <stdatomic.h>
@@ -22,7 +23,12 @@
 #include "openenclave/corelibc/oestring.h"
 
 // from inttypes.h
-#define PRIxPTR "lx"
+#ifdef PRIxPTR
+    #undef PRIxPTR
+    #define PRIxPTR "lx"
+#else
+    #define PRIxPTR "lx"
+#endif
 
 #define VIRTIO_DEV_MAGIC 0x74726976
 #define VIRTIO_DEV_VERSION 2
@@ -73,7 +79,7 @@ static lkl_virtio_dev_deliver_irq virtio_deliver_irq[DEVICE_COUNT];
 
 static struct virtio_dev* dev_hosts[DEVICE_COUNT];
 static struct virtio_dev* shadow_devs[DEVICE_COUNT];  //Rename to devs, change other to dev_names?
-
+struct lthread** virtq_tasks = NULL; //TODO move to an upper level later
 /*
  * Used for switching between the host and shadow dev structure based
  * on the virtio_read/write request
@@ -295,27 +301,7 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
     uint8_t dev_id = (uint8_t)dev->vendor_id;
-    struct virtq_packed_desc* dev_desc = dev->packed.queue[qidx].desc;
-    struct virtq_packed_desc* dev_host_desc = dev_host->packed.queue[qidx].desc;
-#ifdef DEBUG
-    oe_host_printf("Notifying device\n");
-#endif
-    // Oblivious
-    if (packed_ring)
-    {
-         for (int i = 0; i < dev->packed.queue[qidx].num; i++)
-         {
-             dev_host_desc[i].addr = dev_desc[i].addr;
-             dev_host_desc[i].len = dev_desc[i].len;
-             dev_host_desc[i].id = dev_desc[i].id;
-             dev_host_desc[i].flags = dev_desc[i].flags;
-         }
-    }
-
     vio_enclave_notify_enclave_event (dev_id, qidx);
-#ifdef DEBUG
-    oe_host_printf("Notified device\n");
-#endif
 }
 
 /*
@@ -559,48 +545,113 @@ void lkl_virtio_deliver_irq(uint8_t dev_id)
 {
     struct virtio_dev *dev_host = dev_hosts[dev_id];
     struct virtio_dev *dev = shadow_devs[dev_id];
-    int num_queues = device_num_queues(dev_host->device_id);
-
-    //Verify descriptor len doesn't exceed bounds
-    for (int i = 0; i < num_queues; i++)
+    int qidx = dev->queue_sel;
+#ifdef DEBUG
+        oe_host_printf("Notifying guest. device idx: %d, vendor id: %d, qidx: %d\n",
+                   dev->device_id, dev->vendor_id, qidx);
+#endif
+    __sync_synchronize();
+    if (packed_ring)
     {
-        if (packed_ring)
+        struct virtq_packed* packed_q = &dev_host->packed.queue[qidx];
+        for (int j = 0; j < packed_q->num; j++)
         {
-            struct virtq_packed* packed_q = &dev_host->packed.queue[i];
-            for (int j = 0; j < packed_q->num; j++)
-            {
-                if (packed_q->desc[j].len >
-                    sgxlkl_enclave_state.shared_memory.virtio_swiotlb_size)
-                {
-                    sgxlkl_error("Virtio desc memory size larger than allocated bounce buffer\n");
-                    return;
-                }
-
-                dev->packed.queue[i].desc[j].addr = packed_q->desc[j].addr;
-                dev->packed.queue[i].desc[j].len = packed_q->desc[j].len;
-                dev->packed.queue[i].desc[j].id = packed_q->desc[j].id;
-                dev->packed.queue[i].desc[j].flags = packed_q->desc[j].flags;
-            }
-        }
-
-        else
-        {
-            struct virtq* split_q = &dev_host->split.queue[i];
-            for (int j = 0; j < split_q->used->idx; j++)
-            {
-                if (split_q->used->ring[j].len >
-                    sgxlkl_enclave_state.shared_memory.virtio_swiotlb_size)
-                {
-                    sgxlkl_error("Virtio used memory size larger than allocated bounce buffer\n");
-                    return;
-                }
-            }
+#ifdef DEBUG
+            oe_host_printf("desc idx: %d, addr: %lu, len: %d, flags: %d\n",
+                           j, packed_q->desc[j].addr, packed_q->desc[j].len, packed_q->desc[j].flags);
+#endif
+            dev->packed.queue[qidx].desc[j].addr = packed_q->desc[j].addr;
+            dev->packed.queue[qidx].desc[j].len = packed_q->desc[j].len;
+            dev->packed.queue[qidx].desc[j].id = packed_q->desc[j].id;
+            dev->packed.queue[qidx].desc[j].flags = packed_q->desc[j].flags;
         }
     }
+
+    else
+    {
+        struct virtq* split_q = &dev_host->split.queue[qidx];
+        for (int j = 0; j < split_q->used->idx; j++)
+        {
+
+        }
+    }
+
 
     // Get sgxlkl_enclave_state
     if (virtio_deliver_irq[dev_id])
         virtio_deliver_irq[dev_id](dev_id);
+}
+
+static void process_virtq(uint32_t* param)
+{
+    uint32_t vendor_id = *param;
+    struct virtio_dev* dev = shadow_devs[vendor_id];
+    struct virtio_dev* dev_host = dev_hosts[vendor_id];
+    int num_queues = device_num_queues(dev->device_id);
+    size_t queue_disabled_size = next_pow2(num_queues * sizeof(bool));
+    bool* queue_disabled = sgxlkl_host_ops.mem_alloc(queue_disabled_size);
+
+    if (!queue_disabled)
+    {
+        sgxlkl_error("Queue disabled alloc failed\n");
+        return;
+    }
+
+    for (int i = 0; i < num_queues; i++)
+        queue_disabled[i] = 0;
+
+    __sync_synchronize();
+
+    while (1)
+    {
+        if (packed_ring)
+        {
+            for (int qidx = 0; qidx < num_queues; qidx++)
+            {
+                struct virtq_packed_desc* dev_desc =
+                    dev->packed.queue[qidx].desc;
+                struct virtq_packed_desc* dev_host_desc =
+                    dev_host->packed.queue[qidx].desc;
+
+                // TODO need to copy the other way round once reenabled. Figure out how to determine is a qidx was re-enabled
+                if (dev_host->packed.queue[qidx].device->flags ==
+                    LKL_VRING_PACKED_EVENT_FLAG_DISABLE)
+                {
+                    queue_disabled[qidx] = 1;
+                    continue;
+                }
+
+                for (int i = 0; i < dev->packed.queue[qidx].num; i++)
+                {
+                    if (!queue_disabled[qidx])
+                    {
+                        dev_host_desc[i].addr = dev_desc[i].addr;
+                        dev_host_desc[i].len = dev_desc[i].len;
+                        dev_host_desc[i].id = dev_desc[i].id;
+                        dev_host_desc[i].flags = dev_desc[i].flags;
+                        oe_host_printf(
+                            "dev host %p. desc idx: %d, addr: %lu, len: %d, flags: %d\n",
+                            dev_host_desc,
+                            i,
+                            dev_host_desc[i].addr,
+                            dev_host_desc[i].len,
+                            dev_host_desc[i].flags);
+                    }
+
+                    else
+                    {
+                        dev_desc[i].addr = dev_host_desc[i].addr;
+                        dev_desc[i].len = dev_host_desc[i].len;
+                        dev_desc[i].id = dev_host_desc[i].id;
+                        dev_desc[i].flags = dev_host_desc[i].flags;
+                    }
+                }
+
+                if (queue_disabled[qidx])
+                    queue_disabled[qidx] = 0;
+            }
+        }
+    }
 }
 
 static void* copy_queue(struct virtio_dev* dev)
@@ -688,6 +739,7 @@ int lkl_virtio_dev_setup(
 {
     struct virtio_dev_handle* dev_handle;
     int avail = 0, num_bytes = 0, ret = 0;
+    uint8_t* vendor_id = NULL;
     size_t dev_handle_size = next_pow2(sizeof(struct virtio_dev_handle));
     dev_handle = sgxlkl_host_ops.mem_alloc(dev_handle_size);
 
@@ -809,6 +861,28 @@ int lkl_virtio_dev_setup(
         }
         /* Security Review: where is dev->virtio_mmio_id used? */
         dev->virtio_mmio_id = lkl_num_virtio_boot_devs + ret;
+    }
+
+    if (!virtq_tasks)
+    {
+        virtq_tasks = (struct lthread**)oe_calloc_or_die(
+        DEVICE_COUNT,
+        sizeof(struct lthread*),
+        "Could not allocate memory for virtq_tasks\n");
+    }
+
+    vendor_id = (uint8_t*)oe_calloc_or_die(
+        1, sizeof(uint8_t), "Could not allocate memory for vendor_id\n");
+    *vendor_id = dev->vendor_id;
+    //TODO move this to upper level later
+    if (lthread_create(
+            &virtq_tasks[dev->vendor_id],
+            NULL,
+            process_virtq,
+            (void*)vendor_id) != 0)
+    {
+        oe_free(virtq_tasks);
+        sgxlkl_fail("Failed to create lthread for device virtq\n");
     }
     return 0;
 }

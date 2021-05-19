@@ -116,7 +116,7 @@ int blk_device_init(
     struct virtio_blk_dev* host_blk_device = NULL;
     size_t bdev_size = sizeof(struct virtio_blk_dev);
     size_t vq_size;
-    size_t bdev_desc_size = HOST_BLK_DEV_QUEUE_DEPTH  * next_pow2(sizeof(struct virtq_packed_desc));
+    size_t bdev_desc_size = next_pow2(HOST_BLK_DEV_QUEUE_DEPTH * sizeof(struct virtq_packed_desc));
 
     if (!packed_ring)
         vq_size = HOST_BLK_DEV_NUM_QUEUES * sizeof(struct virtq);

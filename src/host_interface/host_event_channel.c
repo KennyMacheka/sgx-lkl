@@ -4,7 +4,9 @@
 #include <host/sgxlkl_util.h>
 #include <host/vio_host_event_channel.h>
 #include <host/virtio_debug.h>
-
+#ifdef DEBUG
+#include <stdio.h>
+#endif
 #define LKL_SHUTDOWN_NOTIFICATION 1
 
 static host_dev_config_t* _dev_cfg;

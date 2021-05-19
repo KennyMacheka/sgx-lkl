@@ -232,7 +232,7 @@ int virtio_console_init(sgxlkl_host_state_t* host_state, host_dev_config_t* cfg)
     size_t host_console_size = next_pow2(sizeof(struct virtio_console_dev));
     size_t console_vq_size;
     //Oblivious
-    size_t console_desc_size = QUEUE_DEPTH * next_pow2(sizeof(struct virtq_packed_desc));
+    size_t console_desc_size = next_pow2(QUEUE_DEPTH * sizeof(struct virtq_packed_desc));
 
     if (!packed_ring)
         console_vq_size = NUM_QUEUES * sizeof(struct virtq);

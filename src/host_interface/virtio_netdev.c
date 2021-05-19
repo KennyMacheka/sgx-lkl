@@ -552,7 +552,7 @@ int netdev_init(sgxlkl_host_state_t* host_state)
 
     size_t host_netdev_size = next_pow2(sizeof(struct virtio_net_dev));
 
-    size_t netdev_desc_size = QUEUE_DEPTH  * next_pow2(sizeof(struct virtq_packed_desc));
+    size_t netdev_desc_size = next_pow2(QUEUE_DEPTH * (sizeof(struct virtq_packed_desc)));
 
     if (!packed_ring)
         netdev_vq_size = NUM_QUEUES * sizeof(struct virtq);
