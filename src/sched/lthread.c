@@ -38,6 +38,7 @@
 
 #include "stdio_impl.h"
 
+#include <lkl/virtio.h>
 #include <enclave/enclave_mem.h>
 #include <enclave/enclave_oe.h>
 #include <enclave/enclave_util.h>
@@ -262,7 +263,8 @@ int lthread_run(void)
                 }
             }
 
-            if (vio_enclave_wakeup_event_channel())
+            if (vio_enclave_wakeup_event_channel() ||
+                vio_wakeup_virtq_tasks())
             {
                 dequeued++;
                 pauses = sleepspins;

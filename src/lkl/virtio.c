@@ -79,7 +79,9 @@ static lkl_virtio_dev_deliver_irq virtio_deliver_irq[DEVICE_COUNT];
 
 static struct virtio_dev* dev_hosts[DEVICE_COUNT];
 static struct virtio_dev* shadow_devs[DEVICE_COUNT];  //Rename to devs, change other to dev_names?
-struct lthread** virtq_tasks = NULL; //TODO move to an upper level later
+static struct lthread** virtq_tasks = NULL; //TODO move to an upper level later
+static bool virtq_threads_terminate = false;
+
 /*
  * Used for switching between the host and shadow dev structure based
  * on the virtio_read/write request
@@ -585,6 +587,14 @@ void lkl_virtio_deliver_irq(uint8_t dev_id)
 static void process_virtq(uint32_t* param)
 {
     uint32_t vendor_id = *param;
+
+    char thread_name[16];
+    oe_snprintf(thread_name, sizeof(thread_name), "vio-%i", vendor_id);
+    lthread_set_funcname(lthread_self(), thread_name);
+    lthread_detach();
+
+    oe_free(param);
+
     struct virtio_dev* dev = shadow_devs[vendor_id];
     struct virtio_dev* dev_host = dev_hosts[vendor_id];
     int num_queues = device_num_queues(dev->device_id);
@@ -602,18 +612,27 @@ static void process_virtq(uint32_t* param)
 
     __sync_synchronize();
 
-    while (1)
+    for (;;)
     {
+        if (virtq_threads_terminate)
+            return;
+
         if (packed_ring)
         {
             for (int qidx = 0; qidx < num_queues; qidx++)
             {
+#ifdef DEBUG
+                oe_host_printf("Checking queue %d for device %d vendor id %d\n",
+                               qidx, dev->device_id, dev->vendor_id);
+#endif
+                if (!dev_host->packed.queue[qidx].ready)
+                    continue;
+
                 struct virtq_packed_desc* dev_desc =
                     dev->packed.queue[qidx].desc;
                 struct virtq_packed_desc* dev_host_desc =
                     dev_host->packed.queue[qidx].desc;
 
-                // TODO need to copy the other way round once reenabled. Figure out how to determine is a qidx was re-enabled
                 if (dev_host->packed.queue[qidx].device->flags ==
                     LKL_VRING_PACKED_EVENT_FLAG_DISABLE)
                 {
@@ -651,6 +670,7 @@ static void process_virtq(uint32_t* param)
                     queue_disabled[qidx] = 0;
             }
         }
+        lthread_yield_and_sleep();
     }
 }
 
@@ -737,6 +757,9 @@ int lkl_virtio_dev_setup(
     int mmio_size,
     void* deliver_irq_cb)
 {
+#ifdef DEBUG
+    oe_host_printf("Setting up device %d vendor id %d\n", dev->device_id, dev->vendor_id);
+#endif
     struct virtio_dev_handle* dev_handle;
     int avail = 0, num_bytes = 0, ret = 0;
     uint8_t* vendor_id = NULL;
@@ -884,6 +907,9 @@ int lkl_virtio_dev_setup(
         oe_free(virtq_tasks);
         sgxlkl_fail("Failed to create lthread for device virtq\n");
     }
+#ifdef DEBUG
+    oe_host_printf("Thread created successfully\n");
+#endif
     return 0;
 }
 
@@ -902,4 +928,24 @@ struct virtio_dev* alloc_shadow_virtio_dev()
         return NULL;
     }
     return dev;
+}
+
+void terminate_virtq_threads()
+{
+    virtq_threads_terminate = true;
+}
+
+int vio_wakeup_virtq_tasks()
+{
+    int ret = 0;
+
+    for (int i = 0; i < DEVICE_COUNT; i++)
+    {
+        if (virtq_tasks[i])
+        {
+            lthread_wakeup(virtq_tasks[i]);
+            ret = 1;
+        }
+    }
+    return ret;
 }
