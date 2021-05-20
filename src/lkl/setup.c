@@ -39,6 +39,7 @@
 #include "lkl/posix-host.h"
 #include "lkl/setup.h"
 #include "lkl/syscall-overrides.h"
+#include "lkl/virtio.h"
 #include "lkl/virtio_device.h"
 #include "lkl/virtio_net.h"
 
@@ -1294,6 +1295,9 @@ void lkl_terminate(int exit_status)
 
     SGXLKL_VERBOSE("calling vio_terminate()\n");
     vio_terminate();
+
+    SGXLKL_VERBOSE("calling terminate_virtq_threads()\n");
+    terminate_virtq_threads();
 
     // Ensure that the last ethread will exit the enclave when this lthread
     // returns.

@@ -38,6 +38,7 @@
 
 #include "stdio_impl.h"
 
+#include <lkl/virtio.h>
 #include <enclave/enclave_mem.h>
 #include <enclave/enclave_oe.h>
 #include <enclave/enclave_util.h>
@@ -267,6 +268,13 @@ int lthread_run(void)
                 dequeued++;
                 pauses = sleepspins;
             }
+
+            if (vio_wakeup_virtq_tasks())
+            {
+                dequeued++;
+                pauses = sleepspins;
+            }
+
 
             spins--;
             if (spins <= 0)
