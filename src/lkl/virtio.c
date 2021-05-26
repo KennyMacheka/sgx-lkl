@@ -3,8 +3,10 @@
  * to run some part of virtio interface inside enclave */
 
 #include <endian.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <lkl/iomem.h>
 #include <lkl/virtio.h>
@@ -79,7 +81,7 @@ static lkl_virtio_dev_deliver_irq virtio_deliver_irq[DEVICE_COUNT];
 
 static struct virtio_dev* dev_hosts[DEVICE_COUNT];
 static struct virtio_dev* shadow_devs[DEVICE_COUNT];  //Rename to devs, change other to dev_names?
-static struct lthread** virtq_tasks = NULL; //TODO move to an upper level later
+static pthread_t* virtq_tasks[DEVICE_COUNT]; //TODO move to an upper level later
 static bool virtq_threads_terminate = false;
 
 /*
@@ -302,7 +304,11 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
+#ifdef DEBUG
+    oe_host_printf("Notifying device %d, vendor id %d, qidx %d\n", dev->device_id, dev->vendor_id, qidx);
+#endif
     uint8_t dev_id = (uint8_t)dev->vendor_id;
+
     vio_enclave_notify_enclave_event (dev_id, qidx);
 }
 
@@ -584,14 +590,9 @@ void lkl_virtio_deliver_irq(uint8_t dev_id)
         virtio_deliver_irq[dev_id](dev_id);
 }
 
-static void process_virtq(uint32_t* param)
+static void * process_virtq(void* param)
 {
-    uint32_t vendor_id = *param;
-
-    char thread_name[16];
-    oe_snprintf(thread_name, sizeof(thread_name), "vio-%i", vendor_id);
-    lthread_set_funcname(lthread_self(), thread_name);
-    lthread_detach();
+    uint32_t vendor_id = *((uint32_t*) param);
 
     oe_free(param);
 
@@ -604,21 +605,20 @@ static void process_virtq(uint32_t* param)
     if (!queue_disabled)
     {
         sgxlkl_error("Queue disabled alloc failed\n");
-        return;
+        return NULL;
     }
 
     for (int i = 0; i < num_queues; i++)
         queue_disabled[i] = 0;
 
-    __sync_synchronize();
-
     for (;;)
     {
         if (virtq_threads_terminate)
-            return;
+            return NULL;
 
         if (packed_ring)
         {
+            __sync_synchronize();
             for (int qidx = 0; qidx < num_queues; qidx++)
             {
 #ifdef DEBUG
@@ -633,45 +633,63 @@ static void process_virtq(uint32_t* param)
                 struct virtq_packed_desc* dev_host_desc =
                     dev_host->packed.queue[qidx].desc;
 
-                if (dev_host->packed.queue[qidx].device->flags ==
-                    LKL_VRING_PACKED_EVENT_FLAG_DISABLE)
+                uint32_t ready_val = dev_host->packed.queue[qidx].ready;
+                dev_host->packed.queue[qidx].ready = 0;
+
+                while (dev_host->packed.queue[qidx].device->flags ==
+                       LKL_VRING_PACKED_EVENT_FLAG_DISABLE)
                 {
-                    queue_disabled[qidx] = 1;
-                    continue;
+
                 }
 
                 for (int i = 0; i < dev->packed.queue[qidx].num; i++)
                 {
                     if (!queue_disabled[qidx])
                     {
+                        oe_host_printf("Enabled\n");
                         dev_host_desc[i].addr = dev_desc[i].addr;
                         dev_host_desc[i].len = dev_desc[i].len;
                         dev_host_desc[i].id = dev_desc[i].id;
                         dev_host_desc[i].flags = dev_desc[i].flags;
+
                         oe_host_printf(
-                            "dev host %p. desc idx: %d, addr: %lu, len: %d, flags: %d\n",
+                            "dev host %p. qidx: %d. desc idx: %d, addr: %lu, len: %d, flags: %d\n",
                             dev_host_desc,
+                            qidx,
                             i,
                             dev_host_desc[i].addr,
                             dev_host_desc[i].len,
                             dev_host_desc[i].flags);
                     }
 
+                    /*
+                    //This is technically not accurate
+                    //Because this could happen simply because the flag
+                    // has been disabled, not because the virtq contents are being filled
+                    // Perhaps use a different flag, and only copy directly when process_one pakced is being called
                     else
                     {
+
+                        oe_host_printf("Disabled\n");
                         dev_desc[i].addr = dev_host_desc[i].addr;
                         dev_desc[i].len = dev_host_desc[i].len;
                         dev_desc[i].id = dev_host_desc[i].id;
                         dev_desc[i].flags = dev_host_desc[i].flags;
-                    }
+                    }*/
                 }
 
                 if (queue_disabled[qidx])
                     queue_disabled[qidx] = 0;
+
+                dev_host->packed.queue[qidx].ready = ready_val;
             }
         }
-        lthread_yield_and_sleep();
+#ifdef DEBUG
+        oe_host_printf("Putting thread to sleep\n");
+#endif
+        //lthread_yield_and_sleep();
     }
+    return NULL;
 }
 
 static void* copy_queue(struct virtio_dev* dev)
@@ -758,7 +776,7 @@ int lkl_virtio_dev_setup(
     void* deliver_irq_cb)
 {
 #ifdef DEBUG
-    oe_host_printf("Setting up device %d vendor id %d\n", dev->device_id, dev->vendor_id);
+    oe_host_printf("Setting up device %d vendor id %d\n", dev_host->device_id, dev_host->vendor_id);
 #endif
     struct virtio_dev_handle* dev_handle;
     int avail = 0, num_bytes = 0, ret = 0;
@@ -886,20 +904,14 @@ int lkl_virtio_dev_setup(
         dev->virtio_mmio_id = lkl_num_virtio_boot_devs + ret;
     }
 
-    if (!virtq_tasks)
-    {
-        virtq_tasks = (struct lthread**)oe_calloc_or_die(
-        DEVICE_COUNT,
-        sizeof(struct lthread*),
-        "Could not allocate memory for virtq_tasks\n");
-    }
-
     vendor_id = (uint8_t*)oe_calloc_or_die(
         1, sizeof(uint8_t), "Could not allocate memory for vendor_id\n");
     *vendor_id = dev->vendor_id;
     //TODO move this to upper level later
-    if (lthread_create(
-            &virtq_tasks[dev->vendor_id],
+    virtq_tasks[dev->vendor_id] = oe_calloc_or_die(1, sizeof(*virtq_tasks[dev->vendor_id]),
+                                                   "Could not allocate memory for virtq task mem %d", errno);
+    if (pthread_create(
+            virtq_tasks[dev->vendor_id],
             NULL,
             process_virtq,
             (void*)vendor_id) != 0)
@@ -933,19 +945,4 @@ struct virtio_dev* alloc_shadow_virtio_dev()
 void terminate_virtq_threads()
 {
     virtq_threads_terminate = true;
-}
-
-int vio_wakeup_virtq_tasks()
-{
-    int ret = 0;
-
-    for (int i = 0; i < DEVICE_COUNT; i++)
-    {
-        if (virtq_tasks[i])
-        {
-            lthread_wakeup(virtq_tasks[i]);
-            ret = 1;
-        }
-    }
-    return ret;
 }

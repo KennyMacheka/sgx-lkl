@@ -541,13 +541,13 @@ static void virtio_process_queue_packed(struct virtio_dev* dev, uint32_t qidx)
     __sync_synchronize();
     q->device->flags = LKL_VRING_PACKED_EVENT_FLAG_DISABLE;
 #ifdef DEBUG
-
+/*
     printf("Processing %p. Device id: %d, vendor id: %d, qidx: %d, driver flags: %d\n", q->desc, dev->device_id, dev->vendor_id, qidx, q->driver->flags);
     for (int i = 0; i < q->num; i++)
     {
        printf("desc idx: %d, addr: %lu, len: %d, flags: %d\n",
                i, q->desc[i].addr, q->desc[i].len, q->desc[i].flags);
-    }
+    }*/
 #endif
     while (packed_desc_is_avail(q,&q->desc[q->avail_desc_idx & (q->num-1)]))
     {

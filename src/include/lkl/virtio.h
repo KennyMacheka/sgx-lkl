@@ -60,6 +60,4 @@ struct virtio_dev* alloc_shadow_virtio_dev();
 
 void terminate_virtq_threads();
 
-int vio_wakeup_virtq_tasks();
-
 #endif //_LKL_LIB_VIRTIO_H
