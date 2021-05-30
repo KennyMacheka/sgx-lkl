@@ -116,7 +116,8 @@ int blk_device_init(
     struct virtio_blk_dev* host_blk_device = NULL;
     size_t bdev_size = sizeof(struct virtio_blk_dev);
     size_t vq_size;
-    size_t bdev_desc_size = next_pow2(HOST_BLK_DEV_QUEUE_DEPTH * sizeof(struct virtq_packed_desc));
+    size_t bdev_split_desc_size = next_pow2(HOST_BLK_DEV_QUEUE_DEPTH * sizeof(struct virtq_desc));
+    size_t bdev_avail_size = next_pow2(HOST_BLK_DEV_QUEUE_DEPTH * sizeof(struct virtq_avail));
 
     if (!packed_ring)
         vq_size = HOST_BLK_DEV_NUM_QUEUES * sizeof(struct virtq);
@@ -164,6 +165,36 @@ int blk_device_init(
         if (!packed_ring)
         {
             host_blk_device->dev.split.queue[i].num_max = HOST_BLK_DEV_QUEUE_DEPTH;
+            host_blk_device->dev.split.queue[i].desc = mmap(
+                0,
+                bdev_split_desc_size,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_ANONYMOUS,
+                -1,
+                0);
+
+            if (!host_blk_device->dev.split.queue[i].desc)
+            {
+                sgxlkl_host_fail("Host block device virtio queue desc mem alloc failed\n");
+                return -1;
+            }
+
+            memset(host_blk_device->dev.split.queue[i].desc, 0, bdev_split_desc_size);
+            host_blk_device->dev.split.queue[i].avail = mmap(
+                0,
+                bdev_avail_size,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_ANONYMOUS,
+                -1,
+                0);
+
+            if (!host_blk_device->dev.split.queue[i].avail)
+            {
+                sgxlkl_host_fail("Host block device virtio queue desc mem alloc failed\n");
+                return -1;
+            }
+
+            memset(host_blk_device->dev.split.queue[i].avail, 0, bdev_avail_size);
         }
         else
         {
@@ -171,20 +202,6 @@ int blk_device_init(
                 HOST_BLK_DEV_QUEUE_DEPTH;
             host_blk_device->dev.packed.queue[i].device_wrap_counter = 1;
             host_blk_device->dev.packed.queue[i].driver_wrap_counter = 1;
-            host_blk_device->dev.packed.queue[i].desc = mmap(
-                0,
-                bdev_desc_size,
-                PROT_READ | PROT_WRITE,
-                MAP_SHARED | MAP_ANONYMOUS,
-                -1,
-                0);
-            if (!host_blk_device->dev.packed.queue[i].desc)
-            {
-                sgxlkl_host_fail(
-                    "Host console device virtio queue desc mem alloc failed\n");
-                return -1;
-            }
-            memset(host_blk_device->dev.packed.queue[i].desc, 0, bdev_desc_size);
         }
     }
 

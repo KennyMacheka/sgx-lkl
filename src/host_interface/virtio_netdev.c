@@ -552,7 +552,8 @@ int netdev_init(sgxlkl_host_state_t* host_state)
 
     size_t host_netdev_size = next_pow2(sizeof(struct virtio_net_dev));
 
-    size_t netdev_desc_size = next_pow2(QUEUE_DEPTH * (sizeof(struct virtq_packed_desc)));
+    size_t netdev_split_desc_size = next_pow2(QUEUE_DEPTH * sizeof(struct virtq_desc));
+    size_t netdev_avail_size = next_pow2(QUEUE_DEPTH * sizeof(struct virtq_avail));
 
     if (!packed_ring)
         netdev_vq_size = NUM_QUEUES * sizeof(struct virtq);
@@ -612,26 +613,42 @@ int netdev_init(sgxlkl_host_state_t* host_state)
         if (!packed_ring)
         {
             net_dev->dev.split.queue[i].num_max = QUEUE_DEPTH;
+            net_dev->dev.split.queue[i].desc = mmap(
+                0,
+                netdev_split_desc_size,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_ANONYMOUS,
+                -1,
+                0);
+
+            if (!net_dev->dev.split.queue[i].desc)
+            {
+                sgxlkl_host_fail("Network device virtio queue desc mem alloc failed\n");
+                return -1;
+            }
+
+            memset(net_dev->dev.split.queue[i].desc, 0, netdev_split_desc_size);
+            net_dev->dev.split.queue[i].avail = mmap(
+                0,
+                netdev_avail_size,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_ANONYMOUS,
+                -1,
+                0);
+
+            if (!net_dev->dev.split.queue[i].avail)
+            {
+                sgxlkl_host_fail("Network device virtio queue desc mem alloc failed\n");
+                return -1;
+            }
+
+            memset(net_dev->dev.split.queue[i].avail, 0, netdev_avail_size);
         }
         else
         {
             net_dev->dev.packed.queue[i].num_max = QUEUE_DEPTH;
             net_dev->dev.packed.queue[i].device_wrap_counter = 1;
             net_dev->dev.packed.queue[i].driver_wrap_counter = 1;
-            net_dev->dev.packed.queue[i].desc = mmap(
-                0,
-                netdev_desc_size,
-                PROT_READ | PROT_WRITE,
-                MAP_SHARED | MAP_ANONYMOUS,
-                -1,
-                0);
-            if (!net_dev->dev.packed.queue[i].desc)
-            {
-                sgxlkl_host_fail(
-                    "Host console device virtio queue desc mem alloc failed\n");
-                return -1;
-            }
-            memset(net_dev->dev.packed.queue[i].desc, 0, netdev_desc_size);
         }
     }
 

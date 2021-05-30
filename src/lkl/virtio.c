@@ -302,6 +302,38 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
+#ifdef DEBUG
+    oe_host_printf("Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
+                   dev->device_id, dev->vendor_id, qidx);
+#endif
+
+    __sync_synchronize();
+    if (!packed_ring)
+    {
+        struct virtq* q = &dev->split.queue[qidx];
+        for (int j = 0; j < q->num; j++)
+        {
+#ifdef DEBUG
+            oe_host_printf(
+                "desc idx: %d, addr: %lu, len: %d, flags: %d\n",
+                j,
+                q->desc[j].addr,
+                q->desc[j].len,
+                q->desc[j].flags);
+#endif
+            dev_host->split.queue[qidx].desc[j].addr = q->desc[j].addr;
+            dev_host->split.queue[qidx].desc[j].len = q->desc[j].len;
+            dev_host->split.queue[qidx].desc[j].next = q->desc[j].next;
+            dev_host->split.queue[qidx].desc[j].flags = q->desc[j].flags;
+        }
+        // Change avail alloc in host_interface
+        dev_host->split.queue[qidx].avail->flags = q->avail->flags;
+        dev_host->split.queue[qidx].avail->idx = q->avail->idx;
+
+        for (int i = 0; i < q->avail->idx; i++)
+            dev_host->split.queue[qidx].avail->ring[i] = q->avail->ring[i];
+    }
+
     uint8_t dev_id = (uint8_t)dev->vendor_id;
     vio_enclave_notify_enclave_event (dev_id, qidx);
 }
@@ -456,13 +488,13 @@ static int virtio_write(void* data, int offset, void* res, int size)
             if (packed_ring)
                 set_ptr_low((_Atomic(uint64_t)*)&packed_q->desc, val);
             else
-                set_ptr_low((_Atomic(uint64_t)*)&split_q->desc, val);
+                set_ptr_low((_Atomic(uint64_t)*)&dev->split.queue[dev->queue_sel].desc, val);
             break;
         case VIRTIO_MMIO_QUEUE_DESC_HIGH:
             if (packed_ring)
                 set_ptr_high((_Atomic(uint64_t)*)&packed_q->desc, val);
             else
-                set_ptr_high((_Atomic(uint64_t)*)&split_q->desc, val);
+                set_ptr_high((_Atomic(uint64_t)*)&dev->split.queue[dev->queue_sel].desc, val);
             break;
         /* Security Review: For Split Queue, q->avail link list content should be
          * host-read-only. The Split Queue implementaiton
@@ -480,13 +512,13 @@ static int virtio_write(void* data, int offset, void* res, int size)
             if (packed_ring)
                 set_ptr_low((_Atomic(uint64_t)*)&dev_host->packed.queue[dev->queue_sel].driver, val);
             else
-                set_ptr_low((_Atomic(uint64_t)*)&split_q->avail, val);
+                set_ptr_low((_Atomic(uint64_t)*)&dev->split.queue[dev->queue_sel].avail, val);
             break;
         case VIRTIO_MMIO_QUEUE_AVAIL_HIGH:
             if (packed_ring)
                set_ptr_high((_Atomic(uint64_t)*)&dev_host->packed.queue[dev->queue_sel].driver, val);
             else
-                set_ptr_high((_Atomic(uint64_t)*)&split_q->avail, val);
+               set_ptr_high((_Atomic(uint64_t)*)&dev->split.queue[dev->queue_sel].avail, val);
             break;
         /* Security Review: For Split Queue, q->used link list content should be
          * guest-read-only. The Split Queue implementaiton in guest side virtio
@@ -545,39 +577,11 @@ static int device_num_queues(int device_id)
  */
 void lkl_virtio_deliver_irq(uint8_t dev_id)
 {
-    struct virtio_dev *dev_host = dev_hosts[dev_id];
     struct virtio_dev *dev = shadow_devs[dev_id];
-    int qidx = dev->queue_sel;
 #ifdef DEBUG
         oe_host_printf("Notifying guest. device idx: %d, vendor id: %d, qidx: %d\n",
-                   dev->device_id, dev->vendor_id, qidx);
+                   dev->device_id, dev->vendor_id, dev->queue_sel);
 #endif
-    __sync_synchronize();
-    if (packed_ring)
-    {
-        struct virtq_packed* packed_q = &dev_host->packed.queue[qidx];
-        for (int j = 0; j < packed_q->num; j++)
-        {
-#ifdef DEBUG
-            oe_host_printf("desc idx: %d, addr: %lu, len: %d, flags: %d\n",
-                           j, packed_q->desc[j].addr, packed_q->desc[j].len, packed_q->desc[j].flags);
-#endif
-            dev->packed.queue[qidx].desc[j].addr = packed_q->desc[j].addr;
-            dev->packed.queue[qidx].desc[j].len = packed_q->desc[j].len;
-            dev->packed.queue[qidx].desc[j].id = packed_q->desc[j].id;
-            dev->packed.queue[qidx].desc[j].flags = packed_q->desc[j].flags;
-        }
-    }
-
-    else
-    {
-        struct virtq* split_q = &dev_host->split.queue[qidx];
-        for (int j = 0; j < split_q->used->idx; j++)
-        {
-
-        }
-    }
-
 
     // Get sgxlkl_enclave_state
     if (virtio_deliver_irq[dev_id])
