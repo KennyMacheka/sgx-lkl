@@ -34,6 +34,7 @@
 #include "host/sgxlkl_params.h"
 #include "host/sgxlkl_util.h"
 #include "host/vio_host_event_channel.h"
+#include "host/virtio_dev.h"
 #include "shared/env.h"
 #include "shared/sgxlkl_enclave_config.h"
 
@@ -1710,6 +1711,21 @@ void host_config_from_file(char* filename)
     if (sgxlkl_read_host_config_from_file(filename, cfg, &err) < 0)
         sgxlkl_host_fail("Error reading host config: %s\n", err);
 }
+
+/*
+void setup_virtio_reqs()
+{
+    //TODO: in copy_shared_mmeory copy this over
+    sgxlkl_shared_memory *shm = &sgxlkl_host_state.shared_memory;
+    shm->num_dummy_virtio_blk_reqs = 32;
+    shm->dummy_virtio_blk_reqs = calloc(32, sizeof(virtio_blk_req));
+
+    //TODO come up with a strategy for setting sector and type
+    for (int i = 0; i < 32; i++)
+    {
+
+    }
+}*/
 
 int main(int argc, char* argv[], char* envp[])
 {

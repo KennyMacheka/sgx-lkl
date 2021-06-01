@@ -25,6 +25,10 @@ typedef struct sgxlkl_shared_memory
     void** virtio_blk_dev_mem;
     char** virtio_blk_dev_names;
 
+    /* Memory for storing dummy virtio blk requests */
+    void* dummy_virtio_blk_reqs;
+    size_t num_dummy_virtio_blk_reqs;
+
     /* Host environment variables for optional import */
     char* const* env;
 } sgxlkl_shared_memory_t;

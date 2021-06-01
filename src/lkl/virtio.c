@@ -22,6 +22,12 @@
 #include <linux/virtio_ids.h>
 #include "openenclave/corelibc/oestring.h"
 
+/**
+ * Obliviousness plan:
+ *  1. Convert into a thread
+ *  2. Experiment updating desc q at certain time intervals with a fixed no. of descriptors
+ *
+ */
 // from inttypes.h
 #ifdef PRIxPTR
     #undef PRIxPTR
@@ -302,36 +308,155 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
-#ifdef DEBUG
-    oe_host_printf("Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
-                   dev->device_id, dev->vendor_id, qidx);
-#endif
+    // Do batching stuff here and handle the rest in thread?
+    // So we don't worry about time, but worry about amount and maybe the file stuff
+    // Thread would handle anything that wasn't included
+    // or we may not need a thread at all
 
+    // TODO: Make helloworld work again. See again if memcpy works
+    // TODO: Add in dummy virtq calls and see the effect
+    // TODO now: figure out what to put in dummy virtq descs and where to allocate memory
+    // Will this effect synchronisation with the guest looking at used desc?
+
+    // What do I put in the dummies? Random values?
+    /**Virtio blk: fill desc, and fill up rest of avail
+     *  outhdr
+     *      sector and type (have to allocate this somewhere, and provide a sector and type)
+     *          How do I allocate this - presumably in host memory?
+     *          How do I specify the sector and type
+     *  actual data
+     *      This can be garbage, just make a char array
+     *  status
+     *      Needs to be allocated
+     *
+     *  All 3 parameters need to be allocated
+     *
+     *  Where do I put them in desc and avail?
+     *      continue investigating
+     *
+     *
+     *  To calculate where to put dummy descriptors:
+     *
+     *  Get q->last_avail_idx
+     *  From that get the ring value in avail
+     *  Put descriptors in after that value
+     *  add them to avail and change avail->idx accordingly
+     *
+     *  Example process:
+     *
+     *  Real Desc:         Real Avail     Avail->idx   q->last_avail_idx       Fake Desc:     Fake Avail:       Fake Avail->idx after processing... q->last_avail_idx
+     *
+     *  0: F                0: 0            2           0                      0: F           0: 1              10                                       10
+     *  1: F                1: 3                                               1: F           1: 3
+     *  2: F                                                                   2: F           2: 6
+     *  3: F                                                                   3: F           3: 9
+     *  4: F                                                                   4: F           4: 12
+     *  5: F                                                                   5: F           5: 15
+     *                                                                         6: V           6: 18
+     *                                                                         7: V           7: 21
+     *                                                                         8: V           8: 24
+     *                                                                         9: V           9: 27
+     *                                                                         10:V
+     *                                                                         11:V
+     *                                                                         12:V
+     *                                                                         13:V
+     *                                                                         14:V
+     *                                                                         15:V
+     *                                                                         16:V
+     *                                                                         17:V
+     *                                                                         18:V
+     *                                                                         19:V
+     *                                                                         20:V
+     *                                                                         21:V
+     *                                                                         22:V
+     *                                                                         23:V
+     *                                                                         24:V
+     *                                                                         25:V
+     *                                                                         26:V
+     *                                                                         27:V
+     *                                                                         28:V
+     *                                                                         29:V
+     *                                                                         30:0
+     *                                                                         31:0
+     *
+     *
+     * Two options: reset avail on the next notification, along with the last_avail_idx to be the same as the guest (minus 1 the guest value)
+     *              don't reset it and also change the original avail and desc, but that won't work
+     *              as the guest has its own internal avail idx tracker we can't change
+     *
+     *
+     * Questions to consider for blkdev:
+     *  1. Is it right to assume that the avail_idx is always one less than avail->idx? I.e. only one blkdev is placed at a time from the guest?
+    */
+#ifdef DEBUG
+    if (dev->device_id == VIRTIO_ID_BLOCK)
+        oe_host_printf("Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
+                        dev->device_id, dev->vendor_id, qidx);
+#endif
+    struct virtq* q = &dev->split.queue[qidx];
     __sync_synchronize();
     if (!packed_ring)
     {
-        struct virtq* q = &dev->split.queue[qidx];
-        for (int j = 0; j < q->num; j++)
+        if (dev->device_id != VIRTIO_ID_BLOCK || 5 == 5)
         {
+            for (int i = 0; i < q->num; i++)
+            {
 #ifdef DEBUG
-            oe_host_printf(
-                "desc idx: %d, addr: %lu, len: %d, flags: %d\n",
-                j,
-                q->desc[j].addr,
-                q->desc[j].len,
-                q->desc[j].flags);
+                if (dev->device_id == VIRTIO_ID_BLOCK && 5 == 4)
+                    oe_host_printf(
+                        "desc idx: %d, addr: %lu, len: %d, flags: %d\n",
+                        i,
+                        q->desc[i].addr,
+                        q->desc[i].len,
+                        q->desc[i].flags);
 #endif
-            dev_host->split.queue[qidx].desc[j].addr = q->desc[j].addr;
-            dev_host->split.queue[qidx].desc[j].len = q->desc[j].len;
-            dev_host->split.queue[qidx].desc[j].next = q->desc[j].next;
-            dev_host->split.queue[qidx].desc[j].flags = q->desc[j].flags;
-        }
-        // Change avail alloc in host_interface
-        dev_host->split.queue[qidx].avail->flags = q->avail->flags;
-        dev_host->split.queue[qidx].avail->idx = q->avail->idx;
+                dev_host->split.queue[qidx].desc[i].addr = q->desc[i].addr;
+                dev_host->split.queue[qidx].desc[i].len = q->desc[i].len;
+                dev_host->split.queue[qidx].desc[i].next = q->desc[i].next;
+                dev_host->split.queue[qidx].desc[i].flags = q->desc[i].flags;
+            }
+#ifdef DEBUG
+            if (dev->device_id == VIRTIO_ID_BLOCK && 5 ==4)
+                oe_host_printf(
+                    "last avail idx: %d, real: %d\n",
+                    dev_host->split.queue[qidx].last_avail_idx,
+                    dev_host->split.queue[qidx].last_avail_idx & 31);
+#endif
+            // Change avail alloc in host_interface
+            dev_host->split.queue[qidx].avail->flags = q->avail->flags;
+            dev_host->split.queue[qidx].avail->idx = q->avail->idx;
 
-        for (int i = 0; i < q->avail->idx; i++)
-            dev_host->split.queue[qidx].avail->ring[i] = q->avail->ring[i];
+            for (int i = 0; i < q->avail->idx; i++)
+            {
+                dev_host->split.queue[qidx].avail->ring[i] = q->avail->ring[i];
+
+#ifdef DEBUG
+                if (dev->device_id == VIRTIO_ID_BLOCK && 5==4)
+                    oe_host_printf(
+                        "avail idx: %d, ring: %d\n", i, q->avail->ring[i] & 31);
+#endif
+            }
+        }
+        /*
+        else //blkdev only
+        {
+            // Don't think I need to uncomment this
+            //dev_host->split.queue[qidx].last_avail_idx = q-avail->idx-1;
+            // Get index
+            uint16_t idx = q->avail->idx;
+            uint16_t curr_desc = q->avail->ring[(idx-1) & q->num];
+            int fake_descs = (q->num-curr_desc-3) / 3;
+            for (int desc_start = curr_desc+3; desc_start < q->num; desc_start += 3)
+            {
+                // Add 3 descriptors each, and also add to avail
+                // Where do I allocate this stuff?
+                // Could use malloc and allocate them in sgxlkl_run_oe.c
+                // Possibly put in shared_memory and call on setup?
+                // Is it valid to put it in shared memory? Could an attacker make use of this?
+                struct virtio_blk_outhdr* h
+
+            }
+        }*/
     }
 
     uint8_t dev_id = (uint8_t)dev->vendor_id;
@@ -599,81 +724,10 @@ static void process_virtq(uint32_t* param)
 
     oe_free(param);
 
-    struct virtio_dev* dev = shadow_devs[vendor_id];
-    struct virtio_dev* dev_host = dev_hosts[vendor_id];
-    int num_queues = device_num_queues(dev->device_id);
-    size_t queue_disabled_size = next_pow2(num_queues * sizeof(bool));
-    bool* queue_disabled = sgxlkl_host_ops.mem_alloc(queue_disabled_size);
-
-    if (!queue_disabled)
-    {
-        sgxlkl_error("Queue disabled alloc failed\n");
-        return;
-    }
-
-    for (int i = 0; i < num_queues; i++)
-        queue_disabled[i] = 0;
-
-    __sync_synchronize();
-
     for (;;)
     {
         if (virtq_threads_terminate)
             return;
-
-        if (packed_ring)
-        {
-            for (int qidx = 0; qidx < num_queues; qidx++)
-            {
-#ifdef DEBUG
-                oe_host_printf("Checking queue %d for device %d vendor id %d\n",
-                               qidx, dev->device_id, dev->vendor_id);
-#endif
-                if (!dev_host->packed.queue[qidx].ready)
-                    continue;
-
-                struct virtq_packed_desc* dev_desc =
-                    dev->packed.queue[qidx].desc;
-                struct virtq_packed_desc* dev_host_desc =
-                    dev_host->packed.queue[qidx].desc;
-
-                if (dev_host->packed.queue[qidx].device->flags ==
-                    LKL_VRING_PACKED_EVENT_FLAG_DISABLE)
-                {
-                    queue_disabled[qidx] = 1;
-                    continue;
-                }
-
-                for (int i = 0; i < dev->packed.queue[qidx].num; i++)
-                {
-                    if (!queue_disabled[qidx])
-                    {
-                        dev_host_desc[i].addr = dev_desc[i].addr;
-                        dev_host_desc[i].len = dev_desc[i].len;
-                        dev_host_desc[i].id = dev_desc[i].id;
-                        dev_host_desc[i].flags = dev_desc[i].flags;
-                        oe_host_printf(
-                            "dev host %p. desc idx: %d, addr: %lu, len: %d, flags: %d\n",
-                            dev_host_desc,
-                            i,
-                            dev_host_desc[i].addr,
-                            dev_host_desc[i].len,
-                            dev_host_desc[i].flags);
-                    }
-
-                    else
-                    {
-                        dev_desc[i].addr = dev_host_desc[i].addr;
-                        dev_desc[i].len = dev_host_desc[i].len;
-                        dev_desc[i].id = dev_host_desc[i].id;
-                        dev_desc[i].flags = dev_host_desc[i].flags;
-                    }
-                }
-
-                if (queue_disabled[qidx])
-                    queue_disabled[qidx] = 0;
-            }
-        }
         lthread_yield_and_sleep();
     }
 }
@@ -890,7 +944,7 @@ int lkl_virtio_dev_setup(
         dev->virtio_mmio_id = lkl_num_virtio_boot_devs + ret;
     }
 
-    if (!virtq_tasks)
+    if (!virtq_tasks && !packed_ring)
     {
         virtq_tasks = (struct lthread**)oe_calloc_or_die(
         DEVICE_COUNT,
@@ -898,22 +952,25 @@ int lkl_virtio_dev_setup(
         "Could not allocate memory for virtq_tasks\n");
     }
 
-    vendor_id = (uint8_t*)oe_calloc_or_die(
-        1, sizeof(uint8_t), "Could not allocate memory for vendor_id\n");
-    *vendor_id = dev->vendor_id;
-    //TODO move this to upper level later
-    if (lthread_create(
-            &virtq_tasks[dev->vendor_id],
-            NULL,
-            process_virtq,
-            (void*)vendor_id) != 0)
+    if (!packed_ring)
     {
-        oe_free(virtq_tasks);
-        sgxlkl_fail("Failed to create lthread for device virtq\n");
-    }
+        vendor_id = (uint8_t*)oe_calloc_or_die(
+            1, sizeof(uint8_t), "Could not allocate memory for vendor_id\n");
+        *vendor_id = dev->vendor_id;
+        // TODO move this to upper level later
+        if (lthread_create(
+                &virtq_tasks[dev->vendor_id],
+                NULL,
+                process_virtq,
+                (void*)vendor_id) != 0)
+        {
+            oe_free(virtq_tasks);
+            sgxlkl_fail("Failed to create lthread for device virtq\n");
+        }
 #ifdef DEBUG
-    oe_host_printf("Thread created successfully\n");
+        oe_host_printf("Thread created successfully\n");
 #endif
+    }
     return 0;
 }
 
@@ -945,11 +1002,12 @@ int vio_wakeup_virtq_tasks()
 
     for (int i = 0; i < DEVICE_COUNT; i++)
     {
-        if (virtq_tasks[i])
+        if (virtq_tasks[i] && (virtq_tasks[i]->attr.state & BIT(LT_ST_SLEEPING)))
         {
             lthread_wakeup(virtq_tasks[i]);
             ret = 1;
         }
     }
+
     return ret;
 }

@@ -263,8 +263,13 @@ int lthread_run(void)
                 }
             }
 
-            if (vio_enclave_wakeup_event_channel() ||
-                vio_wakeup_virtq_tasks())
+            if (vio_enclave_wakeup_event_channel())
+            {
+                dequeued++;
+                pauses = sleepspins;
+            }
+
+            if (vio_wakeup_virtq_tasks())
             {
                 dequeued++;
                 pauses = sleepspins;
