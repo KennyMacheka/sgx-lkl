@@ -1295,10 +1295,7 @@ void lkl_terminate(int exit_status)
 
     SGXLKL_VERBOSE("calling vio_terminate()\n");
     vio_terminate();
-
-    SGXLKL_VERBOSE("calling terminate_virtq_threads()\n");
-    terminate_virtq_threads();
-
+    
     // Ensure that the last ethread will exit the enclave when this lthread
     // returns.
     SGXLKL_VERBOSE("calling lthread_terminate_this_scheduler()\n");

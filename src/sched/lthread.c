@@ -269,12 +269,6 @@ int lthread_run(void)
                 pauses = sleepspins;
             }
 
-            if (vio_wakeup_virtq_tasks())
-            {
-                dequeued++;
-                pauses = sleepspins;
-            }
-
             spins--;
             if (spins <= 0)
             {

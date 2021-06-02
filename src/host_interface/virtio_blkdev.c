@@ -43,10 +43,10 @@ static int blk_enqueue(struct virtio_dev* dev, int q, struct virtio_req* req)
     struct virtio_blk_outhdr* h;
     struct virtio_blk_req_trailer* t;
     size_t offset;
-    int ret;
+    int ret = 0;
 
     sgxlkl_host_disk_state_t* disk = get_disk_config(dev->vendor_id);
-    //sgxlkl_host_disk_state_t* disk_root = &sgxlkl_host_state.disks[0];
+    sgxlkl_host_disk_state_t* disk_root = &sgxlkl_host_state.disks[0];
     int fd = disk->fd;
 
     if (req->buf_count < 3)
@@ -72,12 +72,12 @@ static int blk_enqueue(struct virtio_dev* dev, int q, struct virtio_req* req)
     {
     /**Change this to memcpy and use mmap of root?*/
         case LKL_DEV_BLK_TYPE_READ:
-            ret = pread(fd, req->buf[1].iov_base, req->buf[1].iov_len, offset);
-            //memcpy(req->buf[1].iov_base, &disk_root->mmap[offset], req->buf[1].iov_len);
+            //ret = pread(fd, req->buf[1].iov_base, req->buf[1].iov_len, offset);
+            memcpy(req->buf[1].iov_base, &disk_root->mmap[offset], req->buf[1].iov_len);
             break;
         case LKL_DEV_BLK_TYPE_WRITE:
-            ret = pwrite(fd, req->buf[1].iov_base, req->buf[1].iov_len, offset);
-            //memcpy(&disk_root->mmap[offset], req->buf[1].iov_base, req->buf[1].iov_len);
+            //ret = pwrite(fd, req->buf[1].iov_base, req->buf[1].iov_len, offset);
+            memcpy(&disk_root->mmap[offset], req->buf[1].iov_base, req->buf[1].iov_len);
             break;
         case LKL_DEV_BLK_TYPE_FLUSH:
         case LKL_DEV_BLK_TYPE_FLUSH_OUT:

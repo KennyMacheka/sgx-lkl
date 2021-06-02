@@ -85,8 +85,6 @@ static lkl_virtio_dev_deliver_irq virtio_deliver_irq[DEVICE_COUNT];
 
 static struct virtio_dev* dev_hosts[DEVICE_COUNT];
 static struct virtio_dev* shadow_devs[DEVICE_COUNT];  //Rename to devs, change other to dev_names?
-static struct lthread** virtq_tasks = NULL; //TODO move to an upper level later
-static bool virtq_threads_terminate = false;
 
 /*
  * Used for switching between the host and shadow dev structure based
@@ -308,14 +306,15 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
+    // TODO BUG: without print statements program may not terminate
     // Do batching stuff here and handle the rest in thread?
     // So we don't worry about time, but worry about amount and maybe the file stuff
     // Thread would handle anything that wasn't included
     // or we may not need a thread at all
 
-    // TODO: Make helloworld work again. See again if memcpy works
-        //Memcpy doesn't work, but I'm confused about how it works for old oblivious code, given the offset doesn't change
-        //Idea 2: just get the enqueue to recognise it's a dummy call and use another fd
+
+    //TODO Idea 1: get the enqueue to recognise it's a dummy call and use another fd
+    //TODO Idea 2: If I go with the memcpy idea, figure out how to get the offset of dummy file
     // TODO: Add in dummy virtq calls and see the effect
     // TODO now: figure out what to put in dummy virtq descs and where to allocate memory
     // Will this effect synchronisation with the guest looking at used desc?
@@ -404,7 +403,7 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
             for (int i = 0; i < q->num; i++)
             {
 #ifdef DEBUG
-                if (dev->device_id == VIRTIO_ID_BLOCK && 5 == 4)
+                if (dev->device_id == VIRTIO_ID_BLOCK)
                     oe_host_printf(
                         "desc idx: %d, addr: %lu, len: %d, flags: %d\n",
                         i,
@@ -418,7 +417,7 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
                 dev_host->split.queue[qidx].desc[i].flags = q->desc[i].flags;
             }
 #ifdef DEBUG
-            if (dev->device_id == VIRTIO_ID_BLOCK && 5 ==4)
+            if (dev->device_id == VIRTIO_ID_BLOCK)
                 oe_host_printf(
                     "last avail idx: %d, real: %d\n",
                     dev_host->split.queue[qidx].last_avail_idx,
@@ -433,7 +432,7 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
                 dev_host->split.queue[qidx].avail->ring[i] = q->avail->ring[i];
 
 #ifdef DEBUG
-                if (dev->device_id == VIRTIO_ID_BLOCK && 5==4)
+                if (dev->device_id == VIRTIO_ID_BLOCK)
                     oe_host_printf(
                         "avail idx: %d, ring: %d\n", i, q->avail->ring[i] & 31);
 #endif
@@ -715,25 +714,6 @@ void lkl_virtio_deliver_irq(uint8_t dev_id)
         virtio_deliver_irq[dev_id](dev_id);
 }
 
-static void process_virtq(uint32_t* param)
-{
-    uint32_t vendor_id = *param;
-
-    char thread_name[16];
-    oe_snprintf(thread_name, sizeof(thread_name), "vio-%i", vendor_id);
-    lthread_set_funcname(lthread_self(), thread_name);
-    lthread_detach();
-
-    oe_free(param);
-
-    for (;;)
-    {
-        if (virtq_threads_terminate)
-            return;
-        lthread_yield_and_sleep();
-    }
-}
-
 static void* copy_queue(struct virtio_dev* dev)
 {
     void* vq_mem = NULL;
@@ -822,7 +802,6 @@ int lkl_virtio_dev_setup(
 #endif
     struct virtio_dev_handle* dev_handle;
     int avail = 0, num_bytes = 0, ret = 0;
-    uint8_t* vendor_id = NULL;
     size_t dev_handle_size = next_pow2(sizeof(struct virtio_dev_handle));
     dev_handle = sgxlkl_host_ops.mem_alloc(dev_handle_size);
 
@@ -946,33 +925,6 @@ int lkl_virtio_dev_setup(
         dev->virtio_mmio_id = lkl_num_virtio_boot_devs + ret;
     }
 
-    if (!virtq_tasks && !packed_ring)
-    {
-        virtq_tasks = (struct lthread**)oe_calloc_or_die(
-        DEVICE_COUNT,
-        sizeof(struct lthread*),
-        "Could not allocate memory for virtq_tasks\n");
-    }
-
-    if (!packed_ring)
-    {
-        vendor_id = (uint8_t*)oe_calloc_or_die(
-            1, sizeof(uint8_t), "Could not allocate memory for vendor_id\n");
-        *vendor_id = dev->vendor_id;
-        // TODO move this to upper level later
-        if (lthread_create(
-                &virtq_tasks[dev->vendor_id],
-                NULL,
-                process_virtq,
-                (void*)vendor_id) != 0)
-        {
-            oe_free(virtq_tasks);
-            sgxlkl_fail("Failed to create lthread for device virtq\n");
-        }
-#ifdef DEBUG
-        oe_host_printf("Thread created successfully\n");
-#endif
-    }
     return 0;
 }
 
@@ -991,25 +943,4 @@ struct virtio_dev* alloc_shadow_virtio_dev()
         return NULL;
     }
     return dev;
-}
-
-void terminate_virtq_threads()
-{
-    virtq_threads_terminate = true;
-}
-
-int vio_wakeup_virtq_tasks()
-{
-    int ret = 0;
-
-    for (int i = 0; i < DEVICE_COUNT; i++)
-    {
-        if (virtq_tasks[i] && (virtq_tasks[i]->attr.state & BIT(LT_ST_SLEEPING)))
-        {
-            lthread_wakeup(virtq_tasks[i]);
-            ret = 1;
-        }
-    }
-
-    return ret;
 }
