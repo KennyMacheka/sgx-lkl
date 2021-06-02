@@ -314,6 +314,8 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
     // or we may not need a thread at all
 
     // TODO: Make helloworld work again. See again if memcpy works
+        //Memcpy doesn't work, but I'm confused about how it works for old oblivious code, given the offset doesn't change
+        //Idea 2: just get the enqueue to recognise it's a dummy call and use another fd
     // TODO: Add in dummy virtq calls and see the effect
     // TODO now: figure out what to put in dummy virtq descs and where to allocate memory
     // Will this effect synchronisation with the guest looking at used desc?
