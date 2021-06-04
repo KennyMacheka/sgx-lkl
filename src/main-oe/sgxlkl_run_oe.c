@@ -1712,20 +1712,34 @@ void host_config_from_file(char* filename)
         sgxlkl_host_fail("Error reading host config: %s\n", err);
 }
 
-/*
 void setup_virtio_reqs()
 {
     //TODO: in copy_shared_mmeory copy this over
-    sgxlkl_shared_memory *shm = &sgxlkl_host_state.shared_memory;
-    shm->num_dummy_virtio_blk_reqs = 32;
-    shm->dummy_virtio_blk_reqs = calloc(32, sizeof(virtio_blk_req));
+    sgxlkl_shared_memory_t* shm = &sgxlkl_host_state.shared_memory;
+    shm->num_dummy_virtio_blk_reqs = DUMMY_REQUESTS;
+    shm->dummy_virtio_blk_reqs = calloc(DUMMY_REQUESTS, sizeof(struct virtio_blkdev_dummy_req));
 
-    //TODO come up with a strategy for setting sector and type
-    for (int i = 0; i < 32; i++)
+    if(shm->dummy_virtio_blk_reqs == 0)
     {
-
+        sgxlkl_host_fail(
+            "Failed to allocate memory for dummy virtio blkdev request: %s\n",
+            strerror(errno));
     }
-}*/
+
+    struct virtio_blkdev_dummy_req* reqs = (struct virtio_blkdev_dummy_req*) shm->dummy_virtio_blk_reqs ;
+
+    for (int sector = 20, i = 0; i < 26; sector+=2, i++)
+    {
+        // Create file and mount on disk?
+        // Then get offset?
+        if (i%2 == 0)
+            reqs[i].h.type = LKL_DEV_BLK_TYPE_READ;
+        else
+            reqs[i].h.type = LKL_DEV_BLK_TYPE_WRITE;
+        reqs[i].h.sector = sector;
+    }
+    printf("Num requests start is %lu %lu\n", shm->num_dummy_virtio_blk_reqs, shm->num_virtio_blk_dev);
+}
 
 int main(int argc, char* argv[], char* envp[])
 {
@@ -1904,6 +1918,7 @@ int main(int argc, char* argv[], char* envp[])
     set_tls(have_enclave_config_file);
     register_hds(root_hd);
     register_net();
+    setup_virtio_reqs();
 
     /* SW mode requires special signal handling, since
      * OE does not support exception handling in SW mode. */

@@ -16,25 +16,6 @@
 
 #define VIRTIO_REQ_MAX_BUFS (MAX_SKB_FRAGS + 2)
 
-struct virtio_blk_outhdr
-{
-#define LKL_DEV_BLK_TYPE_READ 0
-#define LKL_DEV_BLK_TYPE_WRITE 1
-#define LKL_DEV_BLK_TYPE_FLUSH 4
-#define LKL_DEV_BLK_TYPE_FLUSH_OUT 5
-    /* VIRTIO_BLK_T* */
-    uint32_t type;
-    /* io priority. */
-    uint32_t ioprio;
-    /* Sector (ie. 512 byte offset) */
-    uint64_t sector;
-};
-
-struct virtio_blk_req_trailer
-{
-    uint8_t status;
-};
-
 struct virtio_blk_config
 {
     /* The capacity (in 512-byte sectors). */

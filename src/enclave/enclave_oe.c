@@ -15,6 +15,11 @@
 #include "shared/env.h"
 #include "shared/timer_dev.h"
 
+#ifdef DEBUG
+#include <openenclave/internal/print.h>
+#endif
+
+
 #define AUXV_ENTRIES 13
 
 char* at_platform = "x86_64";
@@ -331,6 +336,11 @@ static void _copy_shared_memory(const sgxlkl_shared_memory_t* host)
     /* timer_dev_mem is required to be outside the enclave */
     enc->timer_dev_mem = host->timer_dev_mem;
 
+    enc->num_dummy_virtio_blk_reqs = host->num_dummy_virtio_blk_reqs;
+    enc->dummy_virtio_blk_reqs = host->dummy_virtio_blk_reqs;
+#ifdef DEBUG
+    oe_host_printf("NUm dummy is %lu, address is %p, enclave channel num: %lu\n", host->num_dummy_virtio_blk_reqs, host->dummy_virtio_blk_reqs, host->evt_channel_num);
+#endif
     if (cfg->io.block)
     {
         enc->num_virtio_blk_dev = host->num_virtio_blk_dev;

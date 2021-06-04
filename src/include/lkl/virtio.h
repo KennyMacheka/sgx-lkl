@@ -1,11 +1,27 @@
 #ifndef _LKL_LIB_VIRTIO_H
 #define _LKL_LIB_VIRTIO_H
 
+#include <linux/virtio_blk.h>
 #include <lkl_host.h>
 #include <stdint.h>
 
+#define DUMMY_DATA_SIZE 1024
+#define DUMMY_REQUESTS 26
+
 #define container_of(ptr, type, member) \
     (type*)((char*)(ptr) - __builtin_offsetof(type, member))
+
+struct virtio_blk_req_trailer
+{
+    uint8_t status;
+};
+
+struct virtio_blkdev_dummy_req
+{
+    struct virtio_blk_outhdr h;
+    char data[DUMMY_DATA_SIZE];
+    struct virtio_blk_req_trailer t;
+};
 
 struct virtio_dev
 {

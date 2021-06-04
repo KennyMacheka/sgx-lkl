@@ -11,9 +11,38 @@
 #define VIRTIO_F_IOMMU_PLATFORM 33
 #define VIRTIO_F_RING_PACKED 34
 
+#define DUMMY_DATA_SIZE 1024
+#define DUMMY_REQUESTS 26
+
 extern bool packed_ring;
 
 struct virtio_dev;
+
+struct virtio_blk_outhdr
+{
+#define LKL_DEV_BLK_TYPE_READ 0
+#define LKL_DEV_BLK_TYPE_WRITE 1
+#define LKL_DEV_BLK_TYPE_FLUSH 4
+#define LKL_DEV_BLK_TYPE_FLUSH_OUT 5
+    /* VIRTIO_BLK_T* */
+    uint32_t type;
+    /* io priority. */
+    uint32_t ioprio;
+    /* Sector (ie. 512 byte offset) */
+    uint64_t sector;
+};
+
+struct virtio_blk_req_trailer
+{
+    uint8_t status;
+};
+
+struct virtio_blkdev_dummy_req
+{
+    struct virtio_blk_outhdr h;
+    char data[DUMMY_DATA_SIZE];
+    struct virtio_blk_req_trailer t;
+};
 
 struct virtio_req
 {

@@ -430,6 +430,7 @@ static int virtio_process_one_split(struct virtio_dev* dev, int qidx)
         desc = get_next_desc_split(q, desc, &idx);
     } while (desc && req->buf_count < VIRTIO_REQ_MAX_BUFS);
 
+    printf("Calling enqueue\n");
     // Return result of enqueue operation
     return dev->ops->enqueue(dev, qidx, req);
 }
@@ -501,6 +502,17 @@ static void virtio_process_queue_split(struct virtio_dev* dev, uint32_t qidx)
 
     if (dev->ops->acquire_queue)
         dev->ops->acquire_queue(dev, qidx);
+
+#ifdef DEBUG
+
+    printf("Processing %p. Device id: %d, vendor id: %d, qidx: %d, q->last_avail_idx: %d, q->avail_idx: %d\n",
+           q->desc, dev->device_id, dev->vendor_id, qidx, q->last_avail_idx, q->avail->idx);
+    for (int i = 0; i < q->num; i++)
+    {
+       printf("desc idx: %d, addr: %lu, len: %d, flags: %d, next: %d\n",
+               i, q->desc[i].addr, q->desc[i].len, q->desc[i].flags, q->desc[i].next);
+    }
+#endif
 
     while (q->last_avail_idx != q->avail->idx)
     {
