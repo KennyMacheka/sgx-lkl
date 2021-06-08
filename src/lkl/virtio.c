@@ -88,7 +88,7 @@ static struct virtio_dev* dev_hosts[DEVICE_COUNT];
 static struct virtio_dev* shadow_devs[DEVICE_COUNT];  //Rename to devs, change other to dev_names?
 
 static int dummy_index = 0;
-
+static int dummy_blkdev_descs = 0;
 /*
  * Used for switching between the host and shadow dev structure based
  * on the virtio_read/write request
@@ -156,9 +156,7 @@ static int virtio_read(void* data, int offset, void* res, int size)
     struct virtio_dev_handle* dev_handle = (struct virtio_dev_handle*)data;
     struct virtio_dev* dev = dev_handle->dev;
     struct virtio_dev* dev_host = dev_handle->dev_host;
-#ifdef DEBUG
-    oe_host_printf("Virtio read %x\n", offset);
-#endif
+
     if (offset >= VIRTIO_MMIO_CONFIG)
     {
         offset -= VIRTIO_MMIO_CONFIG;
@@ -210,15 +208,9 @@ static int virtio_read(void* data, int offset, void* res, int size)
             break;
         /* Security Review: dev->status is host-read-write */
         case VIRTIO_MMIO_STATUS:
-#ifdef DEBUG
-            oe_host_printf("Reading status");
-#endif
             val = dev_host->status;
             if (dev->status != val)
                 dev->status = val;
-#ifdef DEBUG
-            oe_host_printf("Read status");
-#endif
             break;
         /* Security Review: dev->config_gen should be host-write-once */
         case VIRTIO_MMIO_CONFIG_GENERATION:
@@ -309,29 +301,6 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
-    // TODO BUG: without print statements program may not terminate
-    // Do batching stuff here and handle the rest in thread?
-    // So we don't worry about time, but worry about amount and maybe the file stuff
-    // Thread would handle anything that wasn't included
-    // or we may not need a thread at all
-
-    //Potential mechanism for writing:
-    //Write our garbage data, then store the old data
-    //Then if ever we need to read from this place again, rewrite old data first
-    //What sectors should I pick? Will need to analyse the sectors typically chosen
-    //Will probably need 32 different sectors
-    //THen the ordering doesn't matter and I can write into a the required sector first (but then would I have to read in the next cycle- potential use for threads)
-    //Step 1: create dummy descriptors with valid sectors, hopefully picking rarely used sectors
-    //Sectors 10-68 aren't used in the helloworld program. 26 sectors to pick from
-    //Find out if these extra used descriptors affect the process
-    //step 2: sort out caching and threading
-
-
-   //TODO: See if I can modify the used descriptors in lkl_deliver_irq to only send back the real descs to the guest
-
-
-
-    // What do I put in the dummies? Random values?
     /**Virtio blk: fill desc, and fill up rest of avail
      *  outhdr
      *      sector and type (have to allocate this somewhere, and provide a sector and type)
@@ -401,29 +370,27 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
      * Questions to consider for blkdev:
      *  1. Is it right to assume that the avail_idx is always one less than avail->idx? I.e. only one blkdev is placed at a time from the guest?
     */
-#ifdef DEBUG
-    if (dev->device_id == VIRTIO_ID_BLOCK)
-        oe_host_printf("Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
-                        dev->device_id, dev->vendor_id, qidx);
-#endif
+
+    oe_host_printf("Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
+                   dev->device_id, dev->vendor_id, qidx);
+
     struct virtq* q = &dev->split.queue[qidx];
     struct virtq* host_q = &dev_host->split.queue[qidx];
     __sync_synchronize();
     if (!packed_ring)
     {
-        uint32_t ready_val = host_q->ready;
-        host_q->ready = 0;
-
         for (int i = 0; i < q->num; i++)
         {
 #ifdef DEBUG
+
             if (dev->device_id == VIRTIO_ID_BLOCK)
                 oe_host_printf(
-                    "desc idx: %d, addr: %lu, len: %d, flags: %d\n",
+                    "desc idx: %d, addr: %lu, len: %d, flags: %d, next: %d\n",
                     i,
                     q->desc[i].addr,
                     q->desc[i].len,
-                    q->desc[i].flags);
+                    q->desc[i].flags,
+                    q->desc[i].next);
 #endif
             host_q->desc[i].addr = q->desc[i].addr;
             host_q->desc[i].len = q->desc[i].len;
@@ -433,9 +400,10 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
 #ifdef DEBUG
         if (dev->device_id == VIRTIO_ID_BLOCK)
             oe_host_printf(
-                "last avail idx: %d, real: %d\n",
+                "last avail idx: %d, real: %d, q->last_avail_idx: %d\n",
                 host_q->last_avail_idx,
-                host_q->last_avail_idx & 31);
+                host_q->last_avail_idx & 31,
+                q->last_avail_idx);
 #endif
         // Change avail alloc in host_interface
         host_q->avail->flags = q->avail->flags;
@@ -443,7 +411,7 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
 
         for (int i = 0; i < q->avail->idx; i++)
         {
-            host_q->avail->ring[i] = q->avail->ring[i];
+            host_q->avail->ring[i & (q->num-1)] = q->avail->ring[i & (q->num-1)];
 
 #ifdef DEBUG
             if (dev->device_id == VIRTIO_ID_BLOCK)
@@ -454,27 +422,26 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
 
         if (dev->device_id == VIRTIO_ID_BLOCK) //blkdev only
         {
-            // Don't think I need to uncomment this
-            //dev_host->split.queue[qidx].last_avail_idx = q-avail->idx-1;
-            // Get index
+            bool process_fake_dummy_reqs = true;
+            host_q->last_avail_idx = q->last_avail_idx;
             uint16_t idx = q->avail->idx;
             uint16_t curr_desc = q->avail->ring[(idx-1) & (q->num-1)];
             struct virtio_blkdev_dummy_req* dummy_reqs = sgxlkl_enclave_state.shared_memory.dummy_virtio_blk_reqs;
             int num_dummy_reqs = DUMMY_REQUESTS;
 
-            //For reading, I could use any offset
-            //The problem is writing. I don't want to write into any offset I'm not supposed to
-            //TODO change this to wrap around up curr_desc
+            if (q->last_avail_idx == q->avail->idx)
+                process_fake_dummy_reqs = false;
+
+            if (dummy_blkdev_descs != 0)
+            {
+                host_q->used->idx -= dummy_blkdev_descs;
+                dummy_blkdev_descs = 0;
+            }
+            *((uint16_t*)&host_q->used->ring[q->num]) = q->avail->idx;
+
             for (int desc_start = curr_desc+3; desc_start+2 < q->num; desc_start += 3)
             {
-                // Add 3 descriptors each, and also add to avail
-                // Where do I allocate this stuff?
-                // Could use malloc and allocate them in sgxlkl_run_oe.c
-                // Possibly put in shared_memory and call on setup?
-                // Is it valid to put it in shared memory? Could an attacker make use of this?
-                oe_host_printf("desc start: %d, num: %d\n", desc_start, q->num);
                 struct virtio_blkdev_dummy_req *dummy_req = &dummy_reqs[dummy_index];
-
                 host_q->desc[desc_start].addr = (uint64_t) (&dummy_req->h);
                 host_q->desc[desc_start].len = sizeof(struct virtio_blk_outhdr);
                 host_q->desc[desc_start].flags = LKL_VRING_DESC_F_NEXT;
@@ -494,15 +461,20 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
                 host_q->desc[desc_start+2].flags = LKL_VRING_DESC_F_WRITE;
 
                 host_q->avail->ring[idx & (q->num-1)] = desc_start;
-                host_q->avail->idx++;
                 idx++;
                 dummy_index = (dummy_index + 1) % num_dummy_reqs;
+
+                if (process_fake_dummy_reqs)
+                {
+                    host_q->avail->idx++;
+                    dummy_blkdev_descs++;
+                }
+
             }
         }
-
-        host_q->ready = ready_val;
+        q->last_avail_idx = q->avail->idx;
     }
-    oe_host_printf("About to notify device\n");
+
     uint8_t dev_id = (uint8_t)dev->vendor_id;
     vio_enclave_notify_enclave_event (dev_id, qidx);
 }
@@ -544,9 +516,6 @@ static int virtio_write(void* data, int offset, void* res, int size)
     uint32_t val;
     int ret = 0;
 
-#ifdef DEBUG
-    oe_host_printf("Virtio write %x\n", offset);
-#endif
     if (offset >= VIRTIO_MMIO_CONFIG)
     {
         offset -= VIRTIO_MMIO_CONFIG;
@@ -746,12 +715,18 @@ static int device_num_queues(int device_id)
  */
 void lkl_virtio_deliver_irq(uint8_t dev_id)
 {
-    // TODO change used idx value to current - dummy descs added and see if that makes a difference
-    struct virtio_dev *dev = shadow_devs[dev_id];
-#ifdef DEBUG
-        oe_host_printf("Notifying guest. device idx: %d, vendor id: %d, qidx: %d\n",
-                   dev->device_id, dev->vendor_id, dev->queue_sel);
-#endif
+    struct virtio_dev* dev = shadow_devs[dev_id];
+    struct virtio_dev* dev_host = dev_hosts[dev_id];
+    int qidx = dev->queue_sel;
+
+    oe_host_printf("Notifying guest. device idx: %d, vendor id: %d, qidx: %d\n",
+                   dev->device_id, dev->vendor_id, qidx);
+
+    if (dev->device_id == VIRTIO_ID_BLOCK)
+    {
+        dev_host->split.queue[qidx].used->idx -= dummy_blkdev_descs;
+        dummy_blkdev_descs = 0;
+    }
 
     // Get sgxlkl_enclave_state
     if (virtio_deliver_irq[dev_id])
@@ -841,9 +816,6 @@ int lkl_virtio_dev_setup(
     int mmio_size,
     void* deliver_irq_cb)
 {
-#ifdef DEBUG
-    oe_host_printf("Setting up device %d vendor id %d\n", dev->device_id, dev->vendor_id);
-#endif
     struct virtio_dev_handle* dev_handle;
     int avail = 0, num_bytes = 0, ret = 0;
     size_t dev_handle_size = next_pow2(sizeof(struct virtio_dev_handle));

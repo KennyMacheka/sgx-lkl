@@ -58,6 +58,10 @@
 
 #include "openenclave/corelibc/oestring.h"
 
+#ifdef DEBUG
+#include <stdio.h>
+#endif
+
 #define UMOUNT_DISK_TIMEOUT 2000
 
 // Block size in bytes of the ext4 filesystem for newly created empty disks.

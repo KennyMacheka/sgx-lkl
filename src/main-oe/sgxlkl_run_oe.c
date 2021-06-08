@@ -1726,19 +1726,13 @@ void setup_virtio_reqs()
             strerror(errno));
     }
 
-    struct virtio_blkdev_dummy_req* reqs = (struct virtio_blkdev_dummy_req*) shm->dummy_virtio_blk_reqs ;
+    struct virtio_blkdev_dummy_req* reqs = (struct virtio_blkdev_dummy_req*) shm->dummy_virtio_blk_reqs;
 
-    for (int sector = 20, i = 0; i < 26; sector+=2, i++)
+    for (int sector = 20, i = 0; i < DUMMY_REQUESTS; sector+=2, i++)
     {
-        // Create file and mount on disk?
-        // Then get offset?
-        if (i%2 == 0)
-            reqs[i].h.type = LKL_DEV_BLK_TYPE_READ;
-        else
-            reqs[i].h.type = LKL_DEV_BLK_TYPE_WRITE;
+        reqs[i].h.type = LKL_DEV_BLK_TYPE_READ;
         reqs[i].h.sector = sector;
     }
-    printf("Num requests start is %lu %lu\n", shm->num_dummy_virtio_blk_reqs, shm->num_virtio_blk_dev);
 }
 
 int main(int argc, char* argv[], char* envp[])

@@ -39,22 +39,16 @@ static inline sgxlkl_host_disk_state_t* get_disk_config(uint8_t blkdev_id)
  */
 static int blk_enqueue(struct virtio_dev* dev, int q, struct virtio_req* req)
 {
-    /**Only use fd of disk root?*/
     struct virtio_blk_outhdr* h;
     struct virtio_blk_req_trailer* t;
     size_t offset;
     int ret;
 
     sgxlkl_host_disk_state_t* disk = get_disk_config(dev->vendor_id);
-    //sgxlkl_host_disk_state_t* disk_root = &sgxlkl_host_state.disks[0];
     int fd = disk->fd;
 
     if (req->buf_count < 3)
-    {
-        printf("Exiting 1\n");
         goto out;
-    }
-
 
     h = req->buf[0].iov_base;
     t = req->buf[req->buf_count - 1].iov_base;
@@ -62,31 +56,20 @@ static int blk_enqueue(struct virtio_dev* dev, int q, struct virtio_req* req)
     t->status = LKL_DEV_BLK_STATUS_IOERR;
 
     if (req->buf[0].iov_len != sizeof(*h))
-    {
-        printf("Exiting 2\n");
         goto out;
-    }
 
     if (req->buf[req->buf_count - 1].iov_len != sizeof(*t))
-    {
-        printf("Exiting 3\n");
         goto out;
-    }
 
     offset = h->sector * 512;
-#ifdef DEBUG
-    printf("Offset is: %lu. Sector is: %lu, vendor id: %d\n", offset, h->sector,dev->vendor_id);
-#endif
+
     switch (h->type)
     {
-    /**Change this to memcpy and use mmap of root?*/
         case LKL_DEV_BLK_TYPE_READ:
             ret = pread(fd, req->buf[1].iov_base, req->buf[1].iov_len, offset);
-            //memcpy(req->buf[1].iov_base, &disk_root->mmap[offset], req->buf[1].iov_len);
             break;
         case LKL_DEV_BLK_TYPE_WRITE:
             ret = pwrite(fd, req->buf[1].iov_base, req->buf[1].iov_len, offset);
-            //memcpy(&disk_root->mmap[offset], req->buf[1].iov_base, req->buf[1].iov_len);
             break;
         case LKL_DEV_BLK_TYPE_FLUSH:
         case LKL_DEV_BLK_TYPE_FLUSH_OUT:

@@ -338,9 +338,7 @@ static void _copy_shared_memory(const sgxlkl_shared_memory_t* host)
 
     enc->num_dummy_virtio_blk_reqs = host->num_dummy_virtio_blk_reqs;
     enc->dummy_virtio_blk_reqs = host->dummy_virtio_blk_reqs;
-#ifdef DEBUG
-    oe_host_printf("NUm dummy is %lu, address is %p, enclave channel num: %lu\n", host->num_dummy_virtio_blk_reqs, host->dummy_virtio_blk_reqs, host->evt_channel_num);
-#endif
+
     if (cfg->io.block)
     {
         enc->num_virtio_blk_dev = host->num_virtio_blk_dev;
