@@ -414,6 +414,7 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
             host_q->last_avail_idx = q->last_avail_idx;
             uint16_t idx = q->avail->idx;
             uint16_t curr_desc = q->avail->ring[(idx - 1) & (q->num - 1)];
+            uint16_t start_desc = q->avail->ring[q->last_avail_idx & (q->num - 1)];
             struct virtio_blkdev_dummy_req* dummy_reqs =
                 sgxlkl_enclave_state.shared_memory.dummy_virtio_blk_reqs;
             int num_dummy_reqs = DUMMY_REQUESTS;
@@ -473,9 +474,12 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
              *
              *
              */
-            for (int desc_start = curr_desc + 3; desc_start + 2 < q->num;
-                 desc_start += 3)
+            for (int desc_start = 0; desc_start + 2 < q->num; desc_start += 3)
             {
+                if ((start_desc <= desc_start && desc_start <= curr_desc) ||
+                    (desc_start <= curr_desc && curr_desc <= start_desc))
+                    continue;
+
                 struct virtio_blkdev_dummy_req* dummy_req =
                     &dummy_reqs[dummy_index];
                 host_q->desc[desc_start].addr = (uint64_t)(&dummy_req->h);
@@ -498,15 +502,18 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
                     sizeof(struct virtio_blk_req_trailer);
                 host_q->desc[desc_start + 2].flags = LKL_VRING_DESC_F_WRITE;
 
-                host_q->avail->ring[idx & (q->num - 1)] = desc_start;
-                idx++;
-                dummy_index = (dummy_index + 1) % num_dummy_reqs;
-
-                if (process_fake_dummy_reqs)
+                if (desc_start > curr_desc)
                 {
-                    host_q->avail->idx++;
-                    dummy_blkdev_descs++;
+                    host_q->avail->ring[idx & (q->num - 1)] = desc_start;
+                    idx++;
+
+                    if (process_fake_dummy_reqs)
+                    {
+                        host_q->avail->idx++;
+                        dummy_blkdev_descs++;
+                    }
                 }
+                dummy_index = (dummy_index + 1) % num_dummy_reqs;
             }
             q->last_avail_idx = q->avail->idx;
 #ifdef DEBUG
@@ -514,7 +521,7 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
             // For showcasing
             for (int i = 0; i < q->num; i++)
             {
-                if (dev->device_id == VIRTIO_ID_BLOCK && 5 == 4)
+                if (dev->device_id == VIRTIO_ID_BLOCK)
                     oe_host_printf(
                         "desc idx: %d, addr: %lu, len: %d, flags: %d, next: %d\n",
                         i,
