@@ -311,6 +311,7 @@ static void virtio_req_complete_split(struct virtio_req* req, uint32_t len)
      * case when those numbers wrap up.
      */
 
+
     if (send_irq || (lkl_vring_need_event(
                         le16toh(virtio_get_used_event(q)),
                         virtio_get_used_idx(q),
@@ -320,6 +321,16 @@ static void virtio_req_complete_split(struct virtio_req* req, uint32_t len)
         q->last_used_idx_signaled = virtio_get_used_idx(q);
         virtio_deliver_irq(_req->dev);
     }
+
+    /*
+    if (send_irq || (lkl_vring_need_event(
+        le16toh(virtio_get_used_event(q)),
+        virtio_get_used_idx(q),
+        q->last_used_idx_signaled)))
+    {
+        q->last_used_idx_signaled = virtio_get_used_idx(q);
+        virtio_deliver_irq(_req->dev);
+    }*/
 }
 
 /*
@@ -503,6 +514,7 @@ static void virtio_process_queue_split(struct virtio_dev* dev, uint32_t qidx)
 
     if (dev->ops->acquire_queue)
         dev->ops->acquire_queue(dev, qidx);
+
 
     while (q->last_avail_idx != q->avail->idx)
     {

@@ -301,15 +301,10 @@ static inline void set_ptr_high(_Atomic(uint64_t) * ptr, uint32_t val)
 
 static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev* dev_host, uint32_t qidx)
 {
+    // TODO try adding that processing flag without the virtio dummmies and see the result
     /**Virtio blk: fill desc, and fill up rest of avail
      *  outhdr
-     *      sector and type (have to allocate this somewhere, and provide a sector and type)
-     *          How do I allocate this - presumably in host memory?
-     *          How do I specify the sector and type
-     *  actual data
-     *      This can be garbage, just make a char array
-     *  status
-     *      Needs to be allocated
+     *      sector and type (have to allocate this somewhere, and provide a sector and type) How do I allocate this - presumably in host memory? How do I specify the sector and type actual data This can be garbage, just make a char array status Needs to be allocated
      *
      *  All 3 parameters need to be allocated
      *
@@ -326,19 +321,10 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
      *
      *  Example process:
      *
-     *  Real Desc:         Real Avail     Avail->idx   q->last_avail_idx       Fake Desc:     Fake Avail:       Fake Avail->idx after processing... q->last_avail_idx
+     *  Real Desc:         Real Avail     Avail->idx   q->last_avail_idx Fake Desc:     Fake Avail:       Fake Avail->idx after processing... q->last_avail_idx
      *
-     *  0: F                0: 0            2           0                      0: F           0: 1              10                                       10
-     *  1: F                1: 3                                               1: F           1: 3
-     *  2: F                                                                   2: F           2: 6
-     *  3: F                                                                   3: F           3: 9
-     *  4: F                                                                   4: F           4: 12
-     *  5: F                                                                   5: F           5: 15
-     *                                                                         6: V           6: 18
-     *                                                                         7: V           7: 21
-     *                                                                         8: V           8: 24
-     *                                                                         9: V           9: 27
-     *                                                                         10:V
+     *  0: F                0: 0            2           0 0: F           0: 1 10                                       10 1: F                1: 3 1: F           1: 3 2: F 2: F           2: 6
+     *  3: F 3: F           3: 9 4: F 4: F           4: 12 5: F 5: F 5: 15 6: V           6: 18 7: V           7: 21 8: V           8: 24 9: V           9: 27 10:V
      *                                                                         11:V
      *                                                                         12:V
      *                                                                         13:V
@@ -363,20 +349,22 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
      *
      *
      * Two options: reset avail on the next notification, along with the last_avail_idx to be the same as the guest (minus 1 the guest value)
-     *              don't reset it and also change the original avail and desc, but that won't work
-     *              as the guest has its own internal avail idx tracker we can't change
+     *              don't reset it and also change the original avail and desc, but that won't work as the guest has its own internal avail idx tracker we can't change
      *
      *
      * Questions to consider for blkdev:
      *  1. Is it right to assume that the avail_idx is always one less than avail->idx? I.e. only one blkdev is placed at a time from the guest?
-    */
+     */
 
-    oe_host_printf("Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
-                   dev->device_id, dev->vendor_id, qidx);
+    oe_host_printf(
+        "Notifying host. device idx: %d, vendor id: %d, qidx: %d\n",
+        dev->device_id,
+        dev->vendor_id,
+        qidx);
 
     struct virtq* q = &dev->split.queue[qidx];
     struct virtq* host_q = &dev_host->split.queue[qidx];
-    __sync_synchronize();
+   // __sync_synchronize();
     if (!packed_ring)
     {
         for (int i = 0; i < q->num; i++)
@@ -409,9 +397,9 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
         host_q->avail->flags = q->avail->flags;
         host_q->avail->idx = q->avail->idx;
 
-        for (int i = 0; i < q->avail->idx; i++)
+        for (int i = 0; i <= q->num; i++)
         {
-            host_q->avail->ring[i & (q->num-1)] = q->avail->ring[i & (q->num-1)];
+            host_q->avail->ring[i] = q->avail->ring[i];
 
 #ifdef DEBUG
             if (dev->device_id == VIRTIO_ID_BLOCK)
@@ -420,13 +408,14 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
 #endif
         }
 
-        if (dev->device_id == VIRTIO_ID_BLOCK) //blkdev only
+        if (dev->device_id == VIRTIO_ID_BLOCK) // blkdev only
         {
             bool process_fake_dummy_reqs = true;
             host_q->last_avail_idx = q->last_avail_idx;
             uint16_t idx = q->avail->idx;
-            uint16_t curr_desc = q->avail->ring[(idx-1) & (q->num-1)];
-            struct virtio_blkdev_dummy_req* dummy_reqs = sgxlkl_enclave_state.shared_memory.dummy_virtio_blk_reqs;
+            uint16_t curr_desc = q->avail->ring[(idx - 1) & (q->num - 1)];
+            struct virtio_blkdev_dummy_req* dummy_reqs =
+                sgxlkl_enclave_state.shared_memory.dummy_virtio_blk_reqs;
             int num_dummy_reqs = DUMMY_REQUESTS;
 
             if (q->last_avail_idx == q->avail->idx)
@@ -437,30 +426,79 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
                 host_q->used->idx -= dummy_blkdev_descs;
                 dummy_blkdev_descs = 0;
             }
-            *((uint16_t*)&host_q->used->ring[q->num]) = q->avail->idx;
 
-            for (int desc_start = curr_desc+3; desc_start+2 < q->num; desc_start += 3)
+            *((uint16_t*)&host_q->used->ring[q->num]) = q->avail->idx;
+            // TODO modify to wrap around
+            // Ass: host->last_avail_idx < host->avail->idx
+            // A.Is it worth it to wrap around? The ultimate problem is figuring out how to adjust the used ring
+            // B. If we don't change last_avail_idx, then an attacker would see this and potentially know that the descs before it are fake C. As it is now, as the descs fill up, an attacker would see some are not changing and recognise them as real. From that, it could discern the latest ones#
+            // Let's go with plan A, figure out how to adjust the used idx accordingly when we wrap round
+            // Could loop from 0 to 31 inc. and skip if it's past of host boundaries
+            // Store the host->last_avail_idx and host->avail->idx
+            // Rewrite used idx at the end, adding elements in host->last_avail_idx and host->avail->idx and changing the idx
+            /*
+             * 1. U
+             * 2. U
+             * 3. U
+             * 4. U
+             * 5. U
+             * 6. U
+             * 7. U
+             * 8. U
+             * 9. A
+             * 10. A
+             * 11. A
+             * 12. A
+             * 13. E
+             * 14. E
+             * 15. E
+             * 16. E
+             * 17. E
+             * 18. E
+             * 19. E
+             * 20. E
+             * 21. E
+             * 22. E
+             * 23. E
+             * 24. E
+             * 25. E
+             * 26. E
+             * 27. E
+             * 28. E
+             * 29. E
+             * 30. E
+             * 31. E
+             * 32. E
+             *
+             *
+             *
+             */
+            for (int desc_start = curr_desc + 3; desc_start + 2 < q->num;
+                 desc_start += 3)
             {
-                struct virtio_blkdev_dummy_req *dummy_req = &dummy_reqs[dummy_index];
-                host_q->desc[desc_start].addr = (uint64_t) (&dummy_req->h);
+                struct virtio_blkdev_dummy_req* dummy_req =
+                    &dummy_reqs[dummy_index];
+                host_q->desc[desc_start].addr = (uint64_t)(&dummy_req->h);
                 host_q->desc[desc_start].len = sizeof(struct virtio_blk_outhdr);
                 host_q->desc[desc_start].flags = LKL_VRING_DESC_F_NEXT;
-                host_q->desc[desc_start].next = desc_start+1;
+                host_q->desc[desc_start].next = desc_start + 1;
 
-                host_q->desc[desc_start+1].addr = (uint64_t) (dummy_req->data);
-                host_q->desc[desc_start+1].len = DUMMY_DATA_SIZE;
-                host_q->desc[desc_start+1].flags = LKL_VRING_DESC_F_NEXT;
+                host_q->desc[desc_start + 1].addr = (uint64_t)(dummy_req->data);
+                host_q->desc[desc_start + 1].len = DUMMY_DATA_SIZE;
+                host_q->desc[desc_start + 1].flags = LKL_VRING_DESC_F_NEXT;
 
                 if (dummy_req->h.type == LKL_DEV_BLK_TYPE_WRITE)
-                    host_q->desc[desc_start+1].flags += LKL_VRING_DESC_F_WRITE;
+                    host_q->desc[desc_start + 1].flags +=
+                        LKL_VRING_DESC_F_WRITE;
 
-                host_q->desc[desc_start+1].next = desc_start+2;
+                host_q->desc[desc_start + 1].next = desc_start + 2;
 
-                host_q->desc[desc_start+2].addr = (uint64_t) (&dummy_req->t);
-                host_q->desc[desc_start+2].len = sizeof(struct virtio_blk_req_trailer);
-                host_q->desc[desc_start+2].flags = LKL_VRING_DESC_F_WRITE;
+                host_q->desc[desc_start + 2].addr = (uint64_t)(&dummy_req->t);
+                host_q->desc[desc_start + 2].len =
+                    sizeof(struct virtio_blk_req_trailer);
+                host_q->desc[desc_start + 2].flags = LKL_VRING_DESC_F_WRITE;
 
-                host_q->avail->ring[idx & (q->num-1)] = desc_start;
+                host_q->avail->ring[idx & (q->num - 1)] = desc_start;
                 idx++;
                 dummy_index = (dummy_index + 1) % num_dummy_reqs;
 
@@ -469,14 +507,34 @@ static void virtio_notify_host_device(struct virtio_dev* dev, struct virtio_dev*
                     host_q->avail->idx++;
                     dummy_blkdev_descs++;
                 }
-
             }
+            q->last_avail_idx = q->avail->idx;
+#ifdef DEBUG
+            //oe_host_printf("After adding dummy descriptors\n");
+            // For showcasing
+            for (int i = 0; i < q->num; i++)
+            {
+                if (dev->device_id == VIRTIO_ID_BLOCK && 5 == 4)
+                    oe_host_printf(
+                        "desc idx: %d, addr: %lu, len: %d, flags: %d, next: %d\n",
+                        i,
+                        host_q->desc[i].addr,
+                        host_q->desc[i].len,
+                        host_q->desc[i].flags,
+                        host_q->desc[i].next);
+            }
+            for (int i = 0; i <= q->num; i++)
+            {
+                if (dev->device_id == VIRTIO_ID_BLOCK && 5 == 4)
+                    oe_host_printf(
+                        "avail idx: %d, ring: %d\n", i, host_q->avail->ring[i] & 31);
+            }
+#endif
         }
-        q->last_avail_idx = q->avail->idx;
-    }
 
-    uint8_t dev_id = (uint8_t)dev->vendor_id;
-    vio_enclave_notify_enclave_event (dev_id, qidx);
+        uint8_t dev_id = (uint8_t)dev->vendor_id;
+        vio_enclave_notify_enclave_event(dev_id, qidx);
+    }
 }
 
 /*
@@ -719,8 +777,8 @@ void lkl_virtio_deliver_irq(uint8_t dev_id)
     struct virtio_dev* dev_host = dev_hosts[dev_id];
     int qidx = dev->queue_sel;
 
-    oe_host_printf("Notifying guest. device idx: %d, vendor id: %d, qidx: %d\n",
-                   dev->device_id, dev->vendor_id, qidx);
+    //oe_host_printf("Notifying guest. device idx: %d, vendor id: %d, qidx: %d\n",
+      //             dev->device_id, dev->vendor_id, qidx);
 
     if (dev->device_id == VIRTIO_ID_BLOCK)
     {
